@@ -1,8 +1,16 @@
-# AI Personal Memory
+# AI Personal Memory M1.4 Local PoC
 
-Backend workspace for the AI Personal Memory project.
+Minimal FastAPI + Mangum validation. This project uses only synthetic authentication and does not connect to AWS, PostgreSQL, or external AI services.
 
-Development work is organized by milestone. Secrets, local environment files,
-generated artifacts, and conversation or planning transcripts are excluded from
-version control.
+## Local run
+
+```sh
+POC_AUTH_TOKEN=m1-4-synthetic-token .venv/bin/uvicorn app.main:app --reload
+```
+
+## Tests
+
+```sh
+.venv/bin/pytest -q
+```
 
