@@ -61,3 +61,15 @@ def test_memory_validation():
     response = client.post("/memories", json={"title": "missing required fields"})
     assert response.status_code == 422
 
+
+def test_memory_keyword_search_matches_owned_content():
+    client.post("/memories", json=payload("Project planning"))
+    client.post("/memories", json={**payload("Private note"), "original_text": "A recipe for soup"})
+    response = client.get("/memories", params={"q": "project"})
+    assert response.status_code == 200
+    assert [item["title"] for item in response.json()] == ["Project planning"]
+
+
+def test_empty_search_returns_validation_error():
+    assert client.get("/memories", params={"q": ""}).status_code == 422
+

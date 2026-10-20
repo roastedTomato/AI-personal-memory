@@ -1,7 +1,7 @@
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..config import LOCAL_USER_ID
@@ -36,8 +36,12 @@ def create_memory(payload: MemoryCreate, db: Session = Depends(get_db)) -> Memor
 
 
 @router.get("", response_model=list[MemoryRead])
-def list_memories(db: Session = Depends(get_db)) -> list[MemoryRead]:
-    memories = db.scalars(select(Memory).where(Memory.user_id == LOCAL_USER_ID).order_by(Memory.created_at.desc())).all()
+def list_memories(q: str | None = Query(default=None, min_length=1, max_length=100), db: Session = Depends(get_db)) -> list[MemoryRead]:
+    statement = select(Memory).where(Memory.user_id == LOCAL_USER_ID)
+    if q:
+        pattern = f"%{q.strip()}%"
+        statement = statement.where(or_(Memory.title.ilike(pattern), Memory.original_text.ilike(pattern), Memory.confirmed_content.ilike(pattern), Memory.category.ilike(pattern), Memory.tags.ilike(pattern)))
+    memories = db.scalars(statement.order_by(Memory.created_at.desc())).all()
     return [to_read(memory) for memory in memories]
 
 
