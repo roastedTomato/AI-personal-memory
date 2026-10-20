@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { Alert, Button, FlatList, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Alert, Button, FlatList, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 type Memory = { id: number; title: string; original_text: string; confirmed_content: string; category?: string | null; tags: string[]; source_type: string; confirmation_status: string; created_at: string; updated_at: string };
 type Draft = { title: string; original_text: string; category: string; tags: string };
