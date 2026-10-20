@@ -5,6 +5,7 @@ from .auth import is_valid_synthetic_token
 from .database import Base, engine
 from .routes.memories import router as memories_router
 from .routes.ai import router as ai_router
+from .routes.reminders import router as reminders_router
 
 app = FastAPI(title="AI Personal Memory M2", version="0.2.0")
 Base.metadata.create_all(bind=engine)
@@ -12,8 +13,10 @@ with engine.begin() as connection:
     connection.execute(text("ALTER TABLE memories ADD COLUMN IF NOT EXISTS ai_status VARCHAR(50) NOT NULL DEFAULT 'idle'"))
     connection.execute(text("ALTER TABLE memories ADD COLUMN IF NOT EXISTS ai_error VARCHAR(100)"))
     connection.execute(text("ALTER TABLE memories ADD COLUMN IF NOT EXISTS ai_generated_at TIMESTAMP WITH TIME ZONE"))
+    connection.execute(text("ALTER TABLE memories ADD COLUMN IF NOT EXISTS reminder_at TIMESTAMP WITH TIME ZONE"))
 app.include_router(memories_router)
 app.include_router(ai_router)
+app.include_router(reminders_router)
 
 
 @app.get("/health")

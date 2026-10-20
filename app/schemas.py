@@ -41,6 +41,7 @@ class MemoryRead(BaseModel):
     ai_status: str
     ai_error: str | None
     ai_generated_at: datetime | None
+    reminder_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -67,4 +68,13 @@ class AIAssistResponse(BaseModel):
     draft: AIDraft | None = None
     warnings: list[str] = Field(default_factory=list)
     error: str | None = None
+
+
+class ReminderWrite(BaseModel):
+    reminder_at: datetime = Field()
+
+
+class ReminderRead(BaseModel):
+    memory_id: int
+    reminder_at: datetime
 
