@@ -9,6 +9,7 @@ from ..config import LOCAL_USER_ID
 from ..database import get_db
 from ..models import Memory
 from ..schemas import MemoryCreate, MemoryRead, MemoryUpdate
+from ..services.categories import normalize_category
 from ..services.tags import normalize_tags
 
 router = APIRouter(prefix="/memories", tags=["memories"])
@@ -29,7 +30,8 @@ def owned_memory(db: Session, memory_id: int) -> Memory:
 
 @router.post("", response_model=MemoryRead, status_code=status.HTTP_201_CREATED)
 def create_memory(payload: MemoryCreate, db: Session = Depends(get_db)) -> MemoryRead:
-    memory = Memory(user_id=LOCAL_USER_ID, **payload.model_dump(exclude={"tags"}))
+    values = payload.model_dump(exclude={"tags", "category"})
+    memory = Memory(user_id=LOCAL_USER_ID, category=normalize_category(payload.category), **values)
     memory.tags = json.dumps(normalize_tags(payload.tags, payload.original_text + " " + payload.confirmed_content))
     db.add(memory)
     db.commit()
@@ -56,6 +58,8 @@ def get_memory(memory_id: int, db: Session = Depends(get_db)) -> MemoryRead:
 def update_memory(memory_id: int, payload: MemoryUpdate, db: Session = Depends(get_db)) -> MemoryRead:
     memory = owned_memory(db, memory_id)
     values = payload.model_dump(exclude_unset=True)
+    if "category" in values:
+        values["category"] = normalize_category(values["category"])
     if "tags" in values:
         memory.tags = json.dumps(normalize_tags(values.pop("tags"), values.get("original_text", memory.original_text) + " " + values.get("confirmed_content", memory.confirmed_content)))
     for key, value in values.items():

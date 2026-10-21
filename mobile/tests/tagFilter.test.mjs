@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { availableTags, filterByTags } from '../tagFilter.ts';
+import { availableTags, displayTags, filterByTags } from '../tagFilter.ts';
 
 const memories = [
   { id: 1, tags: ['work', 'urgent'] },
@@ -32,4 +32,9 @@ test('market tag variants share one choice', () => {
   const old = [{ id: 6, tags: ['Markets', 'Market Days'] }];
   assert.deepEqual(availableTags(old), ['market']);
   assert.deepEqual(filterByTags(old, ['market']).map((item) => item.id), [6]);
+});
+
+test('display tags are normalized, deduplicated, and safe when empty', () => {
+  assert.deepEqual(displayTags([]), []);
+  assert.deepEqual(displayTags([' Work ', 'work', 'Weekly', 'A very long but valid layout tag']), ['work', 'a very long but valid layout tag']);
 });

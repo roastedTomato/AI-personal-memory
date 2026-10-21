@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..services import vision
+from ..services.categories import normalize_category
 from ..services.tags import normalize_tags
 from .images import managed_image, owned
 from .memories import to_read
@@ -111,6 +112,7 @@ def run_stage(memory_id, payload, stage, db):
                 recognized_text = payload.text
                 fields = result["draft"]
             fields["tags"] = normalize_tags(fields["tags"], recognized_text or memory.original_text, limit=4)
+            fields["category"] = normalize_category(fields.get("category"))
             memory.vision_draft = json.dumps({"draft_id": uuid4().hex, "stage": "analysis", "origin_stage": stage, "draft": fields,
                                              "reviewed_text": recognized_text or "", "source_image_path": memory.source_image_path,
                                              "version": memory.updated_at.isoformat()})
@@ -159,7 +161,7 @@ def finalize_image(memory_id: int, payload: ImageFinalizeRequest, db: Session = 
                 or pending.get("source_image_path") != memory.source_image_path
                 or pending.get("version") != memory.updated_at.isoformat()):
             raise HTTPException(409, detail="stale_vision_draft")
-        cleaned = payload.draft.model_copy(update={"tags": normalize_tags(payload.draft.tags, payload.draft.summary or payload.text, limit=4)})
+        cleaned = payload.draft.model_copy(update={"tags": normalize_tags(payload.draft.tags, payload.draft.summary or payload.text, limit=4), "category": normalize_category(payload.draft.category)})
         memory.confirmed_vision = cleaned.model_dump_json()
         memory.category = cleaned.category
         memory.tags = json.dumps(cleaned.tags)
@@ -182,7 +184,7 @@ def update_confirmed_image(memory_id: int, payload: ConfirmedImageUpdate, db: Se
     memory.title = payload.title.strip()
     memory.confirmed_content = payload.confirmed_content
     if payload.draft is not None:
-        cleaned = payload.draft.model_copy(update={"tags": normalize_tags(payload.draft.tags, payload.confirmed_content, limit=4)})
+        cleaned = payload.draft.model_copy(update={"tags": normalize_tags(payload.draft.tags, payload.confirmed_content, limit=4), "category": normalize_category(payload.draft.category)})
         memory.confirmed_vision = cleaned.model_dump_json()
         memory.category = cleaned.category
         memory.tags = json.dumps(cleaned.tags)
@@ -221,7 +223,7 @@ def accept(memory_id: int, payload: VisionAccept, db: Session = Depends(get_db))
             or draft.get("source_image_path") != memory.source_image_path
             or draft.get("version") != memory.updated_at.isoformat()):
         raise HTTPException(409, detail="stale_vision_draft")
-    value = payload.draft.model_copy(update={"tags": normalize_tags(payload.draft.tags, payload.draft.summary or memory.confirmed_content, limit=4)})
+    value = payload.draft.model_copy(update={"tags": normalize_tags(payload.draft.tags, payload.draft.summary or memory.confirmed_content, limit=4), "category": normalize_category(payload.draft.category)})
     memory.confirmed_vision = value.model_dump_json()
     if draft.get("origin_stage") != "image_full":
         memory.confirmed_image_text = draft["reviewed_text"]

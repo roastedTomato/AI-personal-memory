@@ -15,7 +15,11 @@ export function canonicalTag(raw: string): string | null {
 }
 
 export function availableTags(memories: TaggedMemory[]): string[] {
-  return [...new Set(memories.flatMap((memory) => memory.tags.map(canonicalTag).filter((tag): tag is string => !!tag)))].sort((a, b) => a.localeCompare(b));
+  return [...new Set(memories.flatMap((memory) => displayTags(memory.tags)))].sort((a, b) => a.localeCompare(b));
+}
+
+export function displayTags(tags: string[]): string[] {
+  return [...new Set(tags.map(canonicalTag).filter((tag): tag is string => !!tag))];
 }
 
 // Multiple selections match any selected tag; keyword results are narrowed by this filter.

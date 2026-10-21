@@ -2,6 +2,7 @@ from fastapi import FastAPI, Header, HTTPException
 from sqlalchemy import text
 
 from .auth import is_valid_synthetic_token
+from .services.categories import normalize_existing_memory_categories
 from .services.tags import normalize_existing_memory_tags
 from .database import Base, engine
 from .routes.memories import router as memories_router
@@ -32,6 +33,7 @@ with engine.begin() as connection:
     connection.execute(text("ALTER TABLE memories ADD COLUMN IF NOT EXISTS image_text_draft TEXT"))
     connection.execute(text("ALTER TABLE memories ADD COLUMN IF NOT EXISTS confirmed_image_text TEXT"))
     normalize_existing_memory_tags(connection)
+    normalize_existing_memory_categories(connection)
 app.include_router(vision_router)
 app.include_router(memories_router)
 app.include_router(ai_router)

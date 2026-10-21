@@ -7,7 +7,7 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 import * as ImagePicker from "expo-image-picker";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { APIError, visionRequestError } from "./apiErrors";
-import { availableTags, filterByTags } from "./tagFilter";
+import { availableTags, displayTags, filterByTags } from "./tagFilter";
 import { mapVisionEnvelope, visibleVisionFields, visionKeys, reminderSuggestion, suggestReminderIfUntouched, emptyVisionDraft, categoryFields, type VisionDraft, type VisionEnvelope, type VisionFieldKey } from "./visionDraft";
 
 const restoreVisionDraft = (raw: string): VisionEnvelope | null => mapVisionEnvelope(JSON.parse(raw));
@@ -90,6 +90,7 @@ export default function App() {
   const [editContent, setEditContent] = useState("");
   const [editVision, setEditVision] = useState<VisionDraft | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiDraft, setAiDraft] = useState<AIAssistResponse | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
@@ -141,7 +142,7 @@ export default function App() {
     setVisionMessage(null);
   }, [selected?.id]);
 
-  const load = async () => { setLoading(true); try { setMemories(await request("/memories")); } catch (e) { Alert.alert("加载失败", String(e)); } finally { setLoading(false); } };
+  const load = async () => { setLoading(true); setLoadError(null); try { setMemories(await request("/memories")); } catch { setLoadError("无法加载 Memories，请检查连接后重试。"); } finally { setLoading(false); } };
   const search = async () => { const keyword = searchKeyword.trim(); if (!keyword) return clearSearch(); setSearchLoading(true); setSearchError(null); try { setSearchResults(await request(`/memories?q=${encodeURIComponent(keyword)}`)); } catch (e) { setSearchError("搜索失败，请重试"); } finally { setSearchLoading(false); } };
   const clearSearch = async () => { setSearchKeyword(""); setSearchResults(null); setSearchError(null); await load(); };
   useEffect(() => { load(); AsyncStorage.getItem("memory-reminder-notifications").then((value) => { if (value) setNotificationMap(JSON.parse(value)); }); const subscription = Notifications.addNotificationResponseReceivedListener(async (response) => { const memoryId = response.notification.request.content.data?.memoryId; if (memoryId) { try { const value = await request(`/memories/${memoryId}`); setSelected(value); const current = value.reminder_at ? new Date(value.reminder_at) : null; setReminderDay(current ? localDay(current) : null); setReminderTime(current ? localTime(current) : null); setReminderTouched(false); setScreen("detail"); } catch { Alert.alert("提醒", "关联的 Memory 不再可用"); } } }); return () => subscription.remove(); }, []);
@@ -439,7 +440,7 @@ export default function App() {
     <Button title="保存修改" onPress={save} /><Button title="取消" onPress={() => setScreen("detail")} />
   </ScrollView></SafeAreaView>;
   if (screen === "form") return <Form draft={draft} setDraft={setDraft} onSave={save} onCancel={() => setScreen(selected ? "detail" : "list")} editing={!!selected} />;
-  if (screen === "detail" && selected) return <SafeAreaView style={styles.container}><ScrollView><Text style={styles.title}>{selected.title}</Text><Text style={styles.meta}>{selected.category || "未分类"} · {selected.tags.join(", ") || "无标签"}</Text><Text style={styles.aiLabel}>最终 Memory 内容</Text><Text style={styles.content}>{selected.confirmed_content}</Text><View style={styles.imageCard}><Text style={styles.aiTitle}>本地图片</Text><Button title={imageLoading ? "处理中…" : "选择图片并解析"} onPress={chooseImage} disabled={imageLoading || visionBusy} />{selected.source_image_filename && <Text>已上传：{selected.source_image_filename}</Text>}{selected.source_image_path && <><Button title={showSavedImage ? "收起图片" : "展开图片"} onPress={() => setShowSavedImage(!showSavedImage)} />{showSavedImage && <Image style={styles.sourceImage} source={{ uri: `${API_URL}/memories/${selected.id}/image/file` }} resizeMode="contain" />}</>}{selected.source_image_path && <Button title="使用 OpenAI 重新识别并分析" onPress={confirmReanalyzeImage} disabled={captureBusy || imageLoading} />}
+  if (screen === "detail" && selected) return <SafeAreaView style={styles.container}><ScrollView contentContainerStyle={styles.scrollContent}><Text style={styles.eyebrow}>MEMORY 详情</Text><Text style={styles.title}>{selected.title}</Text><Text style={styles.meta}>{selected.category || "未分类"}</Text><TagChips tags={selected.tags} /><View style={styles.contentCard}><Text style={styles.sectionTitle}>最终 Memory 内容</Text><Text style={styles.content}>{selected.confirmed_content}</Text></View><View style={styles.imageCard}><Text style={styles.aiTitle}>本地图片</Text><Button title={imageLoading ? "处理中…" : "选择图片并解析"} onPress={chooseImage} disabled={imageLoading || visionBusy} />{selected.source_image_filename && <Text style={styles.supportingText}>已上传：{selected.source_image_filename}</Text>}{selected.source_image_path && <><Button title={showSavedImage ? "收起图片" : "展开图片"} onPress={() => setShowSavedImage(!showSavedImage)} />{showSavedImage && <Image style={styles.sourceImage} source={{ uri: `${API_URL}/memories/${selected.id}/image/file` }} resizeMode="contain" />}</>}{selected.source_image_path && <Button title="使用 OpenAI 重新识别并分析" onPress={confirmReanalyzeImage} disabled={captureBusy || imageLoading} />}
 {visionReview && <View style={styles.aiCard}><Text style={styles.aiTitle}>识别与分析草稿 · 请核对</Text>
   <Text style={styles.aiLabel}>标题</Text><TextInput style={styles.input} value={captureTitle} onChangeText={(title) => { setCaptureTitle(title); titleTouched.current = true; }} maxLength={200} />
   <VisionFields key={visionReview.draft_id} value={visionReview.draft} onChange={reviewVisionFields} disabled={captureBusy} />
@@ -463,14 +464,24 @@ export default function App() {
   const displayedMemories = filterByTags(searchResults ?? memories, selectedTags);
   const toggleTag = (tag: string) => setSelectedTags((tags) => tags.includes(tag) ? tags.filter((item) => item !== tag) : [...tags, tag]);
   const clearFilters = async () => { setSelectedTags([]); await clearSearch(); };
-  return <SafeAreaView style={styles.container}><Text style={styles.title}>我的 Memories</Text><View style={styles.searchRow}><TextInput style={styles.searchInput} placeholder="搜索标题、内容或标签" value={searchKeyword} onChangeText={(value) => { setSearchKeyword(value); if (!value.trim()) setSearchResults(null); setSearchError(null); }} onSubmitEditing={search} returnKeyType="search" /><Button title="搜索" onPress={search} /></View>{searchResults !== null && <Button title="清除搜索" onPress={clearSearch} />}
+  return <SafeAreaView style={styles.container}><Text style={styles.eyebrow}>本地资料库</Text><Text style={styles.title}>我的 Memories</Text><View style={styles.searchPanel}><View style={styles.searchRow}><TextInput style={styles.searchInput} placeholder="搜索标题、内容或标签" placeholderTextColor="#78828c" value={searchKeyword} onChangeText={(value) => { setSearchKeyword(value); if (!value.trim()) setSearchResults(null); setSearchError(null); }} onSubmitEditing={search} returnKeyType="search" /><Button title="搜索" onPress={search} /></View>{searchResults !== null && <Button title="清除搜索" onPress={clearSearch} />}
 <View style={styles.tagFilter}><Button title={showTagChoices ? "收起标签" : `选择标签${selectedTags.length ? ` (${selectedTags.length})` : ""}`} onPress={() => setShowTagChoices(!showTagChoices)} />
-{selectedTags.length > 0 && <View style={styles.tagRow}>{selectedTags.map((tag) => <TouchableOpacity key={tag} style={styles.selectedTag} onPress={() => toggleTag(tag)}><Text>✕ {tag}</Text></TouchableOpacity>)}<Button title="清除全部标签" onPress={() => setSelectedTags([])} /></View>}
-{showTagChoices && (tagChoices.length ? <View style={styles.tagRow}>{tagChoices.map((tag) => <TouchableOpacity key={tag} style={selectedTags.includes(tag) ? styles.selectedTag : styles.tagChoice} onPress={() => toggleTag(tag)}><Text>{selectedTags.includes(tag) ? "✓ " : ""}{tag}</Text></TouchableOpacity>)}</View> : <Text style={styles.status}>还没有可选标签。给 Memory 添加标签后即可筛选。</Text>)}
-</View>{searchLoading && <ActivityIndicator />}{searchError && <View><Text style={styles.error}>{searchError}</Text><Button title="重试" onPress={search} /></View>}<Button title="新建 Memory" onPress={openCreate} /><Button title="拍照" onPress={() => chooseNewImage("camera")} disabled={captureBusy} /><Button title="从相册选择" onPress={() => chooseNewImage("library")} disabled={captureBusy} /><Text style={styles.status}>{loading ? "加载中…" : (searchResults !== null || selectedTags.length > 0) ? (displayedMemories.length ? `找到 ${displayedMemories.length} 条记录` : "没有符合关键词和标签的 Memory") : (memories.length ? `${memories.length} 条记录` : "还没有 Memory")}</Text>{(searchResults !== null || selectedTags.length > 0) && !displayedMemories.length ? <Button title="清除全部筛选" onPress={clearFilters} /> : <FlatList data={displayedMemories} keyExtractor={(item) => String(item.id)} renderItem={({ item }) => <TouchableOpacity style={styles.card} onPress={() => openDetail(item)}><Text style={styles.cardTitle}>{item.title}{item.confirmation_status === "draft" ? " · 待确认" : ""}</Text><Text numberOfLines={2}>{item.confirmed_content || (item.source_image_path ? "图片草稿，点开继续审核" : item.original_text)}</Text></TouchableOpacity>} refreshing={loading} onRefresh={load} />}</SafeAreaView>;
+{selectedTags.length > 0 && <View style={styles.tagRow}>{selectedTags.map((tag) => <TouchableOpacity key={tag} style={styles.selectedTag} onPress={() => toggleTag(tag)}><Text style={styles.selectedTagText} numberOfLines={1}>✕ {tag}</Text></TouchableOpacity>)}<Button title="清除全部" onPress={() => setSelectedTags([])} /></View>}
+{showTagChoices && (tagChoices.length ? <View style={styles.tagRow}>{tagChoices.map((tag) => <TouchableOpacity key={tag} style={selectedTags.includes(tag) ? styles.selectedTag : styles.tagChoice} onPress={() => toggleTag(tag)}><Text style={selectedTags.includes(tag) ? styles.selectedTagText : styles.tagText} numberOfLines={1}>{selectedTags.includes(tag) ? "✓ " : ""}{tag}</Text></TouchableOpacity>)}</View> : <Text style={styles.status}>还没有可选标签。给 Memory 添加标签后即可筛选。</Text>)}</View></View>
+<View style={styles.actionPanel}><Button title="新建 Memory" onPress={openCreate} /><View style={styles.actionRow}><View style={styles.actionItem}><Button title="拍照" onPress={() => chooseNewImage("camera")} disabled={captureBusy} /></View><View style={styles.actionItem}><Button title="从相册选择" onPress={() => chooseNewImage("library")} disabled={captureBusy} /></View></View></View>
+{(loading || searchLoading) && <View style={styles.loadingState}><ActivityIndicator color="#27634a" /><Text style={styles.status}>{searchLoading ? "正在搜索…" : "正在加载…"}</Text></View>}
+{(loadError || searchError) && <View style={styles.errorCard}><Text style={styles.error}>{loadError || searchError}</Text><Button title="重试" onPress={searchError ? search : load} /></View>}
+{!loading && !loadError && <Text style={styles.resultCount}>{(searchResults !== null || selectedTags.length > 0) ? (displayedMemories.length ? `找到 ${displayedMemories.length} 条记录` : "没有符合关键词和标签的 Memory") : (memories.length ? `${memories.length} 条记录` : "还没有 Memory")}</Text>}
+{!loading && !loadError && !displayedMemories.length ? <View style={styles.emptyState}><Text style={styles.emptyTitle}>{searchResults !== null || selectedTags.length > 0 ? "没有匹配结果" : "从第一条 Memory 开始"}</Text><Text style={styles.supportingText}>{searchResults !== null || selectedTags.length > 0 ? "换一个关键词或清除筛选后再试。" : "你可以手动新建，也可以拍照或从相册导入。"}</Text>{(searchResults !== null || selectedTags.length > 0) && <Button title="清除全部筛选" onPress={clearFilters} />}</View> : <FlatList data={displayedMemories} contentContainerStyle={styles.listContent} keyExtractor={(item) => String(item.id)} renderItem={({ item }) => <TouchableOpacity style={styles.card} onPress={() => openDetail(item)} activeOpacity={0.72}><View style={styles.cardHeader}><Text style={styles.cardTitle} numberOfLines={2}>{item.title}</Text>{item.confirmation_status === "draft" && <Text style={styles.draftBadge}>待确认</Text>}</View>{item.category && <Text style={styles.cardMeta}>{item.category}</Text>}<Text style={styles.cardContent} numberOfLines={2}>{item.confirmed_content || (item.source_image_path ? "图片草稿，点开继续审核" : item.original_text)}</Text><TagChips tags={item.tags} compact /></TouchableOpacity>} refreshing={loading} onRefresh={load} />}</SafeAreaView>;
 }
 
 const visionLabels: Record<VisionFieldKey, string> = { summary: "摘要", category: "分类", tags: "标签", amount: "金额", currency: "币种（ISO，如 CNY）", date: "日期（YYYY-MM-DD）", time: "具体时间（HH:MM）", due_date: "到期日（YYYY-MM-DD）", institution: "机构名称", location_name: "地点名称", location_address: "地址", location_purpose: "地点用途" };
+
+function TagChips({ tags, compact = false }: { tags: string[]; compact?: boolean }) {
+  const visibleTags = displayTags(tags);
+  if (!visibleTags.length) return null;
+  return <View style={[styles.tagRow, compact && styles.compactTagRow]}>{visibleTags.map((tag) => <View key={tag} style={styles.tagChip}><Text style={styles.tagText} numberOfLines={1} ellipsizeMode="tail">{tag}</Text></View>)}</View>;
+}
 
 function VisionFields({ value, onChange, disabled = false, preferred = [] }: { value: VisionDraft; onChange?: (draft: VisionDraft) => void; disabled?: boolean; preferred?: VisionFieldKey[] }) {
   const [visible, setVisible] = useState<VisionFieldKey[]>(() => [...new Set([...preferred, ...visibleVisionFields(value)])]);
@@ -491,6 +502,62 @@ function VisionFields({ value, onChange, disabled = false, preferred = [] }: { v
   </View>;
 }
 
-function Form({ draft, setDraft, onSave, onCancel, editing }: { draft: Draft; setDraft: (draft: Draft) => void; onSave: () => void; onCancel: () => void; editing: boolean }) { const field = (key: keyof Draft, placeholder: string, multiline = false) => <TextInput style={[styles.input, multiline && styles.multiline]} placeholder={placeholder} value={draft[key]} onChangeText={(value) => setDraft({ ...draft, [key]: value })} multiline={multiline} />; return <SafeAreaView style={styles.container}><ScrollView><Text style={styles.title}>{editing ? "编辑 Memory" : "新建 Memory"}</Text>{field("title", "标题")}{field("original_text", "内容", true)}{field("category", "分类")}{field("tags", "标签，用逗号分隔") }<Button title="保存" onPress={onSave} /><Button title="取消" onPress={onCancel} /></ScrollView></SafeAreaView>; }
+function Form({ draft, setDraft, onSave, onCancel, editing }: { draft: Draft; setDraft: (draft: Draft) => void; onSave: () => void; onCancel: () => void; editing: boolean }) {
+  const field = (key: keyof Draft, label: string, placeholder: string, multiline = false) => <View><Text style={styles.fieldLabel}>{label}</Text><TextInput style={[styles.input, multiline && styles.multiline]} placeholder={placeholder} placeholderTextColor="#78828c" value={draft[key]} onChangeText={(value) => setDraft({ ...draft, [key]: value })} multiline={multiline} /></View>;
+  const formTags = draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean);
+  return <SafeAreaView style={styles.container}><ScrollView contentContainerStyle={styles.scrollContent}><Text style={styles.eyebrow}>{editing ? "更新资料" : "添加资料"}</Text><Text style={styles.title}>{editing ? "编辑 Memory" : "新建 Memory"}</Text><View style={styles.formCard}>{field("title", "标题", "输入清晰、易识别的标题")}{field("original_text", "内容", "记录账单、收据或通知的关键信息", true)}{field("category", "分类", "例如：账单、收据、通知")}{field("tags", "标签", "使用逗号分隔多个标签")}<TagChips tags={formTags} /></View><View style={styles.formActions}><Button title="保存" onPress={onSave} /><Button title="取消" onPress={onCancel} /></View></ScrollView></SafeAreaView>;
+}
 
-const styles = StyleSheet.create({ container: { flex: 1, padding: 20, gap: 12 }, title: { fontSize: 28, fontWeight: "700", marginBottom: 12 }, tagFilter: { gap: 6, marginBottom: 10 }, tagRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 }, tagChoice: { borderWidth: 1, borderColor: "#bbb", borderRadius: 16, paddingHorizontal: 12, paddingVertical: 7 }, selectedTag: { borderWidth: 1, borderColor: "#5c9565", backgroundColor: "#e7f4e8", borderRadius: 16, paddingHorizontal: 12, paddingVertical: 7 }, searchRow: { flexDirection: "row", alignItems: "center", gap: 8 }, searchInput: { flex: 1, borderWidth: 1, borderColor: "#bbb", borderRadius: 6, padding: 10, fontSize: 16 }, status: { color: "#666", marginVertical: 8 }, error: { color: "#b00020" }, card: { padding: 16, borderWidth: 1, borderColor: "#ddd", borderRadius: 8, marginBottom: 10 }, cardTitle: { fontSize: 18, fontWeight: "600", marginBottom: 6 }, meta: { color: "#666", marginBottom: 20 }, content: { fontSize: 17, lineHeight: 26, marginBottom: 24 }, selectedTime: { fontSize: 16, color: "#245b2a", marginVertical: 6 }, imageCard: { borderWidth: 1, borderColor: "#9bbf9b", borderRadius: 8, padding: 14, marginVertical: 12, gap: 8 }, reminderCard: { borderWidth: 1, borderColor: "#8ab4d6", borderRadius: 8, padding: 14, marginVertical: 12, gap: 8 }, sourceImage: { width: "100%", height: 260, marginVertical: 10 }, aiCard: { borderWidth: 1, borderColor: "#e0b04b", borderRadius: 8, padding: 14, marginVertical: 12, gap: 8 }, aiTitle: { fontSize: 19, fontWeight: "700" }, aiLabel: { fontSize: 15, marginBottom: 6 }, fieldRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, warning: { color: "#8a5a00", marginBottom: 8 }, input: { borderWidth: 1, borderColor: "#bbb", borderRadius: 6, padding: 12, fontSize: 16, marginBottom: 12 }, multiline: { minHeight: 140, textAlignVertical: "top" } });
+const styles = StyleSheet.create({
+  container: { flex: 1, paddingHorizontal: 18, paddingTop: 16, backgroundColor: "#f5f7f6" },
+  scrollContent: { paddingBottom: 32 },
+  eyebrow: { color: "#27634a", fontSize: 12, fontWeight: "700", letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 4 },
+  title: { color: "#17201c", fontSize: 29, lineHeight: 35, fontWeight: "700", marginBottom: 14 },
+  sectionTitle: { color: "#17201c", fontSize: 16, fontWeight: "700", marginBottom: 10 },
+  tagFilter: { gap: 8, marginTop: 8 },
+  tagRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 7, marginBottom: 12 },
+  compactTagRow: { marginTop: 12, marginBottom: 0 },
+  tagChip: { maxWidth: "100%", borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: "#e7f1ec", borderWidth: 1, borderColor: "#c9ded3" },
+  tagChoice: { maxWidth: "100%", borderWidth: 1, borderColor: "#cbd3cf", backgroundColor: "#ffffff", borderRadius: 16, paddingHorizontal: 12, paddingVertical: 7 },
+  selectedTag: { maxWidth: "100%", borderWidth: 1, borderColor: "#4e8068", backgroundColor: "#dcece4", borderRadius: 16, paddingHorizontal: 12, paddingVertical: 7 },
+  tagText: { color: "#315c48", fontSize: 13, flexShrink: 1 },
+  selectedTagText: { color: "#1f513a", fontSize: 13, fontWeight: "600", flexShrink: 1 },
+  searchPanel: { backgroundColor: "#ffffff", borderRadius: 16, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: "#e1e6e3" },
+  searchRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  searchInput: { flex: 1, minWidth: 0, borderWidth: 1, borderColor: "#cbd3cf", backgroundColor: "#fbfcfb", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16, color: "#17201c" },
+  actionPanel: { backgroundColor: "#ffffff", borderRadius: 16, padding: 12, gap: 8, marginBottom: 10, borderWidth: 1, borderColor: "#e1e6e3" },
+  actionRow: { flexDirection: "row", gap: 8 },
+  actionItem: { flex: 1 },
+  loadingState: { alignItems: "center", paddingVertical: 18 },
+  status: { color: "#65716b", lineHeight: 20, marginVertical: 8 },
+  resultCount: { color: "#65716b", fontSize: 13, fontWeight: "600", marginVertical: 8 },
+  error: { color: "#9f2430", lineHeight: 20 },
+  errorCard: { backgroundColor: "#fff1f2", borderColor: "#f0c4c9", borderWidth: 1, borderRadius: 12, padding: 12, gap: 8, marginVertical: 8 },
+  emptyState: { backgroundColor: "#ffffff", alignItems: "center", borderRadius: 16, borderWidth: 1, borderColor: "#e1e6e3", padding: 24, gap: 8 },
+  emptyTitle: { color: "#26332d", fontSize: 18, fontWeight: "700" },
+  supportingText: { color: "#65716b", lineHeight: 20 },
+  listContent: { paddingBottom: 28 },
+  card: { padding: 16, backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#e1e6e3", borderRadius: 16, marginBottom: 10, shadowColor: "#18231e", shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
+  cardHeader: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  cardTitle: { color: "#17201c", flex: 1, fontSize: 18, lineHeight: 23, fontWeight: "700" },
+  cardMeta: { color: "#527060", fontSize: 13, fontWeight: "600", marginTop: 5 },
+  cardContent: { color: "#4d5953", fontSize: 15, lineHeight: 22, marginTop: 8 },
+  draftBadge: { color: "#7a5200", backgroundColor: "#fff2ce", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, fontSize: 12, fontWeight: "700" },
+  meta: { color: "#65716b", marginBottom: 10 },
+  contentCard: { backgroundColor: "#ffffff", borderRadius: 16, padding: 16, marginVertical: 12, borderWidth: 1, borderColor: "#e1e6e3" },
+  content: { color: "#27322d", fontSize: 16, lineHeight: 25, marginBottom: 10 },
+  selectedTime: { fontSize: 15, color: "#245b3f", marginVertical: 5 },
+  imageCard: { borderWidth: 1, borderColor: "#c9ded3", backgroundColor: "#f9fcfa", borderRadius: 16, padding: 15, marginVertical: 12, gap: 9 },
+  reminderCard: { borderWidth: 1, borderColor: "#c8d9e7", backgroundColor: "#f8fbfd", borderRadius: 16, padding: 15, marginVertical: 12, gap: 9 },
+  sourceImage: { width: "100%", height: 260, marginVertical: 10, borderRadius: 12, backgroundColor: "#edf0ee" },
+  aiCard: { borderWidth: 1, borderColor: "#ead49c", backgroundColor: "#fffcf4", borderRadius: 16, padding: 15, marginVertical: 12, gap: 9 },
+  aiTitle: { color: "#26332d", fontSize: 18, fontWeight: "700" },
+  aiLabel: { color: "#3d4943", fontSize: 14, fontWeight: "600", marginBottom: 6 },
+  fieldLabel: { color: "#35413b", fontSize: 14, fontWeight: "700", marginBottom: 6 },
+  fieldRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  warning: { color: "#805800", backgroundColor: "#fff7df", padding: 9, borderRadius: 8, marginBottom: 8 },
+  input: { color: "#17201c", backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#cbd3cf", borderRadius: 10, padding: 12, fontSize: 16, marginBottom: 14 },
+  multiline: { minHeight: 140, textAlignVertical: "top" },
+  formCard: { backgroundColor: "#ffffff", borderRadius: 16, padding: 16, borderWidth: 1, borderColor: "#e1e6e3" },
+  formActions: { gap: 8, marginTop: 14 },
+});
