@@ -83,9 +83,9 @@ function createMemoryFromImage(uri: string, name: string, type: string): Promise
   });
 }
 
-function Button({ title, onPress, disabled = false, color }: { title: string; onPress: () => void; disabled?: boolean; color?: string }) {
+function Button({ title, onPress, disabled = false, color, variant = "secondary", compact = false }: { title: string; onPress: () => void; disabled?: boolean; color?: string; variant?: "primary" | "secondary"; compact?: boolean }) {
   const destructive = color === "#b00020";
-  return <TouchableOpacity accessibilityRole="button" accessibilityState={{ disabled }} activeOpacity={0.72} disabled={disabled} onPress={onPress} style={[styles.button, destructive && styles.destructiveButton, disabled && styles.disabledButton]}><Text style={[styles.buttonText, destructive && styles.destructiveButtonText, disabled && styles.disabledButtonText]} numberOfLines={2}>{title}</Text></TouchableOpacity>;
+  return <TouchableOpacity accessibilityRole="button" accessibilityState={{ disabled }} activeOpacity={0.7} disabled={disabled} onPress={onPress} style={[styles.button, variant === "primary" && styles.primaryButton, compact && styles.compactButton, destructive && styles.destructiveButton, disabled && styles.disabledButton]}><Text style={[styles.buttonText, variant === "primary" && styles.primaryButtonText, destructive && styles.destructiveButtonText, disabled && styles.disabledButtonText]} numberOfLines={2}>{title}</Text></TouchableOpacity>;
 }
 
 function AppContent() {
@@ -474,7 +474,7 @@ function AppContent() {
 <View style={styles.tagFilter}><Button title={showTagChoices ? "Hide Tags" : `Filter by Tags${selectedTags.length ? ` (${selectedTags.length})` : ""}`} onPress={() => setShowTagChoices(!showTagChoices)} />
 {selectedTags.length > 0 && <View style={styles.tagRow}>{selectedTags.map((tag) => <TouchableOpacity key={tag} style={styles.selectedTag} onPress={() => toggleTag(tag)}><Text style={styles.selectedTagText} numberOfLines={1}>✕ {tag}</Text></TouchableOpacity>)}<Button title="Clear All" onPress={() => setSelectedTags([])} /></View>}
 {showTagChoices && (tagChoices.length ? <View style={styles.tagRow}>{tagChoices.map((tag) => <TouchableOpacity key={tag} style={selectedTags.includes(tag) ? styles.selectedTag : styles.tagChoice} onPress={() => toggleTag(tag)}><Text style={selectedTags.includes(tag) ? styles.selectedTagText : styles.tagText} numberOfLines={1}>{selectedTags.includes(tag) ? "✓ " : ""}{tag}</Text></TouchableOpacity>)}</View> : <Text style={styles.status}>No tags yet. Add tags to a Memory to filter by them.</Text>)}</View></View>
-<View style={styles.actionPanel}><Button title="New Memory" onPress={openCreate} /><View style={styles.actionRow}><View style={styles.actionItem}><Button title="Take Photo" onPress={() => chooseNewImage("camera")} disabled={captureBusy} /></View><View style={styles.actionItem}><Button title="Choose Photo" onPress={() => chooseNewImage("library")} disabled={captureBusy} /></View></View></View>
+<View style={styles.actionPanel}><Button title="＋  New Memory" onPress={openCreate} variant="primary" compact /><View style={styles.actionRow}><View style={styles.actionItem}><Button title="Take Photo" onPress={() => chooseNewImage("camera")} disabled={captureBusy} /></View><View style={styles.actionItem}><Button title="Choose Photo" onPress={() => chooseNewImage("library")} disabled={captureBusy} /></View></View></View>
 {(loading || searchLoading) && <View style={styles.loadingState}><ActivityIndicator color="#27634a" /><Text style={styles.status}>{searchLoading ? "Searching…" : "Loading…"}</Text></View>}
 {(loadError || searchError) && <View style={styles.errorCard}><Text style={styles.error}>{loadError || searchError}</Text><Button title="Try Again" onPress={searchError ? search : load} /></View>}
 {!loading && !loadError && <Text style={styles.resultCount}>{(searchResults !== null || selectedTags.length > 0) ? (displayedMemories.length ? `${displayedMemories.length} ${displayedMemories.length === 1 ? "result" : "results"}` : "No Memories match your search and tags") : (memories.length ? `${memories.length} ${memories.length === 1 ? "Memory" : "Memories"}` : "No Memories yet")}</Text>}
@@ -536,13 +536,16 @@ const styles = StyleSheet.create({
   searchPanel: { backgroundColor: "#ffffff", borderRadius: 16, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: "#e1e6e3" },
   searchRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   searchInput: { flex: 1, minWidth: 0, borderWidth: 1, borderColor: "#cbd3cf", backgroundColor: "#fbfcfb", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16, color: "#17201c" },
-  button: { minHeight: 44, justifyContent: "center", alignItems: "center", backgroundColor: "#6f9f88", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, marginVertical: 3, borderWidth: 1, borderColor: "#5f9079" },
-  buttonText: { color: "#ffffff", fontSize: 14, lineHeight: 19, fontWeight: "700", textAlign: "center" },
+  button: { minHeight: 44, justifyContent: "center", alignItems: "center", backgroundColor: "#ffffff", borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10, marginVertical: 3, borderWidth: 1, borderColor: "#c4d5cc" },
+  buttonText: { color: "#315f49", fontSize: 14, lineHeight: 19, fontWeight: "700", textAlign: "center" },
+  primaryButton: { backgroundColor: "#dcece4", borderColor: "#a9cbb9", shadowColor: "#315f49", shadowOpacity: 0.08, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  primaryButtonText: { color: "#234d39", fontSize: 15 },
+  compactButton: { alignSelf: "center", minWidth: 176, paddingHorizontal: 22 },
   destructiveButton: { backgroundColor: "#fff4f4", borderColor: "#c7434f" },
   destructiveButtonText: { color: "#a3202d" },
   disabledButton: { backgroundColor: "#dfe5e2", borderColor: "#d2d9d5", opacity: 0.72 },
   disabledButtonText: { color: "#77827c" },
-  actionPanel: { gap: 8, marginBottom: 10 },
+  actionPanel: { alignItems: "stretch", gap: 10, marginBottom: 12, paddingVertical: 2 },
   actionRow: { flexDirection: "row", gap: 8 },
   actionItem: { flex: 1 },
   headerActions: { flexDirection: "row", alignSelf: "center", width: "82%", gap: 10, marginTop: 2, marginBottom: 8 },
