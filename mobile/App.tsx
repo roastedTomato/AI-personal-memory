@@ -86,7 +86,7 @@ function createMemoryFromImage(uri: string, name: string, type: string): Promise
 function Button({ title, onPress, disabled = false, color, variant = "secondary", compact = false, nowrap = false }: { title: string; onPress: () => void; disabled?: boolean; color?: string; variant?: "primary" | "secondary"; compact?: boolean; nowrap?: boolean }) {
   const destructive = color === "#b00020";
   const singleLine = nowrap || title.startsWith("+");
-  return <TouchableOpacity accessibilityRole="button" accessibilityState={{ disabled }} activeOpacity={0.7} disabled={disabled} onPress={onPress} style={[styles.button, variant === "primary" && styles.primaryButton, compact && styles.compactButton, destructive && styles.destructiveButton, disabled && styles.disabledButton]}><Text style={[styles.buttonText, variant === "primary" && styles.primaryButtonText, destructive && styles.destructiveButtonText, disabled && styles.disabledButtonText]} numberOfLines={singleLine ? 1 : 2} adjustsFontSizeToFit={singleLine} minimumFontScale={0.75}>{title}</Text></TouchableOpacity>;
+  return <TouchableOpacity accessibilityRole="button" accessibilityState={{ disabled }} activeOpacity={0.7} disabled={disabled} onPress={onPress} style={[styles.button, singleLine && styles.singleLineButton, variant === "primary" && styles.primaryButton, compact && styles.compactButton, destructive && styles.destructiveButton, disabled && styles.disabledButton]}><Text style={[styles.buttonText, variant === "primary" && styles.primaryButtonText, destructive && styles.destructiveButtonText, disabled && styles.disabledButtonText]} numberOfLines={singleLine ? 1 : 2}>{title}</Text></TouchableOpacity>;
 }
 
 function AppContent() {
@@ -537,6 +537,7 @@ const styles = StyleSheet.create({
   searchRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   searchInput: { flex: 1, minWidth: 0, borderWidth: 1, borderColor: "#cbd3cf", backgroundColor: "#fbfcfb", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16, color: "#17201c" },
   button: { minHeight: 44, justifyContent: "center", alignItems: "center", backgroundColor: "#ffffff", borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10, marginVertical: 3, borderWidth: 1, borderColor: "#c4d5cc" },
+  singleLineButton: { paddingHorizontal: 6 },
   buttonText: { color: "#315f49", fontSize: 14, lineHeight: 19, fontWeight: "700", textAlign: "center" },
   primaryButton: { backgroundColor: "#dcece4", borderColor: "#a9cbb9", shadowColor: "#315f49", shadowOpacity: 0.08, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 1 , alignSelf: "flex-start",flexShrink: 0},
   primaryButtonText: { color: "#234d39", fontSize: 12 },
