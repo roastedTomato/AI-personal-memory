@@ -1,4 +1,5 @@
 import json
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
@@ -8,6 +9,7 @@ from ..config import LOCAL_USER_ID
 from ..database import get_db
 from ..models import Memory
 from ..schemas import MemoryCreate, MemoryRead, MemoryUpdate
+from ..services.tags import normalize_tags
 
 router = APIRouter(prefix="/memories", tags=["memories"])
 
@@ -28,7 +30,7 @@ def owned_memory(db: Session, memory_id: int) -> Memory:
 @router.post("", response_model=MemoryRead, status_code=status.HTTP_201_CREATED)
 def create_memory(payload: MemoryCreate, db: Session = Depends(get_db)) -> MemoryRead:
     memory = Memory(user_id=LOCAL_USER_ID, **payload.model_dump(exclude={"tags"}))
-    memory.tags = json.dumps(payload.tags)
+    memory.tags = json.dumps(normalize_tags(payload.tags, payload.original_text + " " + payload.confirmed_content))
     db.add(memory)
     db.commit()
     db.refresh(memory)
@@ -55,7 +57,7 @@ def update_memory(memory_id: int, payload: MemoryUpdate, db: Session = Depends(g
     memory = owned_memory(db, memory_id)
     values = payload.model_dump(exclude_unset=True)
     if "tags" in values:
-        memory.tags = json.dumps(values.pop("tags"))
+        memory.tags = json.dumps(normalize_tags(values.pop("tags"), values.get("original_text", memory.original_text) + " " + values.get("confirmed_content", memory.confirmed_content)))
     for key, value in values.items():
         setattr(memory, key, value)
     db.commit()
@@ -66,6 +68,23 @@ def update_memory(memory_id: int, payload: MemoryUpdate, db: Session = Depends(g
 @router.delete("/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_memory(memory_id: int, db: Session = Depends(get_db)) -> None:
     memory = owned_memory(db, memory_id)
-    db.delete(memory)
-    db.commit()
+    staged = None
+    image_path = None
+    if memory.source_image_path:
+        # Import here because image routes already use to_read from this module.
+        from .images import managed_image_path
+        image_path = managed_image_path(memory)
+        if image_path.is_file():
+            staged = image_path.with_name(f".deleting-{uuid4().hex}-{image_path.name}")
+            image_path.rename(staged)
+    try:
+        db.delete(memory)
+        db.commit()
+    except Exception:
+        db.rollback()
+        if staged is not None and image_path is not None:
+            staged.rename(image_path)
+        raise
+    if staged is not None:
+        staged.unlink()
 

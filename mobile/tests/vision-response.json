@@ -1,0 +1,28 @@
+{
+  "memory_id": 42,
+  "metadata": {
+    "status": "generated"
+  },
+  "vision": {
+    "draft_id": "synthetic-draft",
+    "draft": {
+      "suggested_title": "测试账单标题",
+      "summary": "测试账单",
+      "category": "bill",
+      "tags": [
+        "test"
+      ],
+      "amount": "12.50",
+      "currency": "CNY",
+      "date": "2026-10-21",
+      "time": null,
+      "due_date": "2026-10-21",
+      "institution": "Synthetic Test",
+      "location_name": "Synthetic Place",
+      "location_address": "Synthetic Address",
+      "location_purpose": "Synthetic Purpose",
+      "uncertain_fields": [],
+      "warnings": []
+    }
+  }
+}

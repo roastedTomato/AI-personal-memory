@@ -11,6 +11,7 @@ from sqlalchemy import delete  # noqa: E402
 from app.database import SessionLocal  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Memory  # noqa: E402
+from app.routes import images  # noqa: E402
 
 client = TestClient(app)
 
@@ -73,3 +74,50 @@ def test_memory_keyword_search_matches_owned_content():
 def test_empty_search_returns_validation_error():
     assert client.get("/memories", params={"q": ""}).status_code == 422
 
+
+
+def test_deleting_memory_removes_managed_image(tmp_path, monkeypatch):
+    monkeypatch.setattr(images, "UPLOAD_DIR", tmp_path)
+    created = client.post("/memories", json=payload()).json()
+    memory_id = created["id"]
+    uploaded = client.post(
+        f"/memories/{memory_id}/image",
+        files={"image": ("sample.png", b"test image data", "image/png")},
+    )
+    assert uploaded.status_code == 200
+    image_path = tmp_path / uploaded.json()["source_image_path"].split("/")[-1]
+    assert image_path.is_file()
+
+    assert client.delete(f"/memories/{memory_id}").status_code == 204
+    assert not image_path.exists()
+    assert client.get(f"/memories/{memory_id}").status_code == 404
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_deleting_memory_succeeds_when_image_file_is_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(images, "UPLOAD_DIR", tmp_path)
+    created = client.post("/memories", json=payload()).json()
+    memory_id = created["id"]
+    with SessionLocal() as db:
+        memory = db.get(Memory, memory_id)
+        memory.source_image_path = f"uploads/{memory_id}-missing.png"
+        db.commit()
+
+    assert client.delete(f"/memories/{memory_id}").status_code == 204
+    assert client.get(f"/memories/{memory_id}").status_code == 404
+
+
+def test_deleting_memory_rejects_unmanaged_image_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(images, "UPLOAD_DIR", tmp_path)
+    created = client.post("/memories", json=payload()).json()
+    memory_id = created["id"]
+    unrelated = tmp_path / "unrelated.png"
+    unrelated.write_bytes(b"keep")
+    with SessionLocal() as db:
+        memory = db.get(Memory, memory_id)
+        memory.source_image_path = "uploads/unrelated.png"
+        db.commit()
+
+    assert client.delete(f"/memories/{memory_id}").status_code == 400
+    assert client.get(f"/memories/{memory_id}").status_code == 200
+    assert unrelated.read_bytes() == b"keep"

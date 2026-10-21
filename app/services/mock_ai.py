@@ -16,6 +16,6 @@ def generate_draft(original_text: str, operations: list[str]) -> MockAIResult:
     category = "personal"
     if any(word in text.lower() for word in ("work", "project", "meeting", "deadline")):
         category = "work"
-    tags = ["mock-ai", category]
+    tags = [category]
     warnings = ["This is a synthetic draft and is not verified fact."]
     return MockAIResult(summary=summary, category=category, tags=tags, warnings=warnings)

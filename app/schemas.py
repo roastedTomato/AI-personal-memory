@@ -42,6 +42,19 @@ class MemoryRead(BaseModel):
     ai_error: str | None
     ai_generated_at: datetime | None
     reminder_at: datetime | None
+    source_image_path: str | None
+    source_image_filename: str | None
+    source_image_mime_type: str | None
+    source_image_size: int | None
+    ocr_text: str | None
+    ocr_status: str | None
+    ocr_error: str | None
+    ocr_duration_ms: int | None
+    image_text_draft: str | None
+    confirmed_image_text: str | None
+    vision_draft: str | None
+    vision_metadata: str | None
+    confirmed_vision: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -78,3 +91,7 @@ class ReminderRead(BaseModel):
     memory_id: int
     reminder_at: datetime
 
+
+
+class ImageParseRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=50000)
