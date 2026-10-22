@@ -35,19 +35,19 @@ These screenshots show the main flow from browsing Memories and reviewing extrac
 
 ### Memory list
 
-![Memory list](docs/screenshots/memory-list.png)
+![Memory list](docs/screenshots/memory-list.jpg)
 
 ### Review extracted AI fields
 
-![Review extracted fields](docs/screenshots/review-fields.png)
+![Review extracted fields](docs/screenshots/review-fields.jpg)
 
 ### Memory details and one-time reminder
 
-![Memory detail and reminder](docs/screenshots/memory-detail-reminder.png)
+![Memory detail and reminder](docs/screenshots/memory-detail-reminder.jpg)
 
 ### Local notification
 
-![Local reminder notification](docs/screenshots/notification-reminder.png)
+![Local reminder notification](docs/screenshots/notification-reminder.jpg)
 
 ## Architecture
 
