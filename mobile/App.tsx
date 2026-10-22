@@ -11,8 +11,17 @@ import { availableTags, displayTags, filterByTags } from "./tagFilter";
 import { API_URL, request } from "./api/client";
 import { mapVisionEnvelope, visibleVisionFields, visionKeys, reminderSuggestion, suggestReminderIfUntouched, emptyVisionDraft, categoryFields, type VisionDraft, type VisionEnvelope, type VisionFieldKey } from "./visionDraft";
 
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
 const restoreVisionDraft = (raw: string): VisionEnvelope | null => mapVisionEnvelope(JSON.parse(raw));
-type Memory = { image_text_draft?: string | null; confirmed_image_text?: string | null; vision_draft?: string | null; vision_metadata?: string | null; confirmed_vision?: string | null; id: number; title: string; original_text: string; confirmed_content: string; category?: string | null; tags: string[]; source_type: string; confirmation_status: string; reminder_at?: string | null; ocr_text?: string | null; ocr_status?: string | null; ocr_error?: string | null; ocr_duration_ms?: number | null; source_image_path?: string | null; source_image_filename?: string | null; source_image_mime_type?: string | null; source_image_size?: number | null; created_at: string; updated_at: string };
+type Memory = { image_text_draft?: string | null; confirmed_image_text?: string | null; vision_draft?: string | null; vision_metadata?: string | null; confirmed_vision?: string | null; id: number; title: string; original_text: string; confirmed_content: string; category?: string | null; tags: string[]; source_type: string; confirmation_status: string; reminder_at?: string | null; reminder_notification_id?: string | null; ocr_text?: string | null; ocr_status?: string | null; ocr_error?: string | null; ocr_duration_ms?: number | null; source_image_path?: string | null; source_image_filename?: string | null; source_image_mime_type?: string | null; source_image_size?: number | null; created_at: string; updated_at: string };
 type AIDraftField = { value: string; confidence: number; uncertain: boolean };
 type AIDraft = { summary: string; category: AIDraftField; tags: AIDraftField[] };
 type AIAssistResponse = { memory_id: number; ai_status: string; draft?: AIDraft; warnings: string[]; error?: string | null };
@@ -104,6 +113,8 @@ function AppContent() {
   const [pickerMode, setPickerMode] = useState<"date" | "time" | null>(null);
   const [notificationMap, setNotificationMap] = useState<Record<string, { notification_id: string; reminder_at: string }>>({});
   const [reminderError, setReminderError] = useState<string | null>(null);
+  const [reminderMessage, setReminderMessage] = useState<string | null>(null);
+  const [reminderBusy, setReminderBusy] = useState(false);
   const [imageLoading, setImageLoading] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const [imageDraft, setImageDraft] = useState<any>(null);
@@ -142,7 +153,7 @@ function AppContent() {
   const load = async () => { setLoading(true); setLoadError(null); try { setMemories(await request("/memories")); } catch { setLoadError("Unable to load Memories. Check your connection and try again."); } finally { setLoading(false); } };
   const search = async () => { const keyword = searchKeyword.trim(); if (!keyword) return clearSearch(); setSearchLoading(true); setSearchError(null); try { setSearchResults(await request(`/memories?q=${encodeURIComponent(keyword)}`)); } catch (e) { setSearchError("Search failed. Please try again."); } finally { setSearchLoading(false); } };
   const clearSearch = async () => { setSearchKeyword(""); setSearchResults(null); setSearchError(null); await load(); };
-  useEffect(() => { load(); AsyncStorage.getItem("memory-reminder-notifications").then((value) => { if (value) setNotificationMap(JSON.parse(value)); }); const subscription = Notifications.addNotificationResponseReceivedListener(async (response) => { const memoryId = response.notification.request.content.data?.memoryId; if (memoryId) { try { const value = await request(`/memories/${memoryId}`); setSelected(value); const current = value.reminder_at ? new Date(value.reminder_at) : null; setReminderDay(current ? localDay(current) : null); setReminderTime(current ? localTime(current) : null); setReminderTouched(false); setScreen("detail"); } catch { Alert.alert("Reminder", "The linked Memory is no longer available."); } } }); return () => subscription.remove(); }, []);
+  useEffect(() => { Notifications.setNotificationChannelAsync("memory-reminders", { name: "Memory reminders", importance: Notifications.AndroidImportance.HIGH, sound: "default" }).catch(() => {}); load(); AsyncStorage.getItem("memory-reminder-notifications").then((value) => { if (value) setNotificationMap(JSON.parse(value)); }); const subscription = Notifications.addNotificationResponseReceivedListener(async (response) => { const memoryId = response.notification.request.content.data?.memoryId; if (memoryId) { try { const value = await request(`/memories/${memoryId}`); setSelected(value); const current = value.reminder_at ? new Date(value.reminder_at) : null; setReminderDay(current ? localDay(current) : null); setReminderTime(current ? localTime(current) : null); setReminderTouched(false); setScreen("detail"); } catch { Alert.alert("Reminder", "The linked Memory is no longer available."); } } }); return () => subscription.remove(); }, []);
   const openCreate = () => { setSelected(null); setAiDraft(null); setDraft(emptyDraft); setScreen("form"); };
   const openDetail = (memory: Memory) => { setSelected(memory); setAiDraft(null);
     const recognized = memory.image_text_draft ? JSON.parse(memory.image_text_draft) : null;
@@ -155,7 +166,7 @@ function AppContent() {
     const suggestion = storedDraft ? suggestReminderIfUntouched(storedDraft, memory.reminder_at, !!manual) : null;
     setReminderDay(current ? localDay(current) : manual ? manual.day : suggestion?.day ?? null);
     setReminderTime(current ? localTime(current) : manual ? manual.time : suggestion?.time ?? null);
-    setReminderTouched(!!manual); setShowSavedImageText(false); setShowSavedOcrText(false); setShowSavedImage(false); setReminderError(null); setCaptureTitle(memory.title); titleTouched.current = memory.confirmation_status !== "draft"; setManualContent(""); setCaptureError(null); setScreen(memory.confirmation_status === "draft" ? "capture" : "detail"); };
+    setReminderTouched(!!manual); setShowSavedImageText(false); setShowSavedOcrText(false); setShowSavedImage(false); setReminderError(null); setReminderMessage(null); setCaptureTitle(memory.title); titleTouched.current = memory.confirmation_status !== "draft"; setManualContent(""); setCaptureError(null); setScreen(memory.confirmation_status === "draft" ? "capture" : "detail"); };
   const updateReminderFromDraft = (fields: VisionDraft) => {
     if (!selected || selected.reminder_at || reminderTouched || reminderDrafts.current[selected.id]) return;
     const suggestion = reminderSuggestion(fields);
@@ -370,39 +381,65 @@ function AppContent() {
   const rejectAI = async () => { if (!selected) return; try { const value = await request(`/memories/${selected.id}`, { method: "PATCH", body: JSON.stringify({ confirmation_status: "rejected" }) }); setSelected(value); setAiDraft(null); } catch (e) { Alert.alert("Unable to reject draft", String(e)); } };
   const persistNotificationMap = async (next: typeof notificationMap) => { setNotificationMap(next); await AsyncStorage.setItem("memory-reminder-notifications", JSON.stringify(next)); };
   const clearNotificationMetadata = async (memoryId: number) => { const next = { ...notificationMap }; delete next[String(memoryId)]; await persistNotificationMap(next); };
+  const showPersistedReminder = (memory: Memory) => {
+    const current = memory.reminder_at ? new Date(memory.reminder_at) : null;
+    setSelected(memory);
+    setReminderDay(current ? localDay(current) : null);
+    setReminderTime(current ? localTime(current) : null);
+    setReminderTouched(false);
+  };
+  const updateMemoryCaches = (memory: Memory) => {
+    setMemories((items) => items.map((item) => item.id === memory.id ? memory : item));
+    setSearchResults((items) => items?.map((item) => item.id === memory.id ? memory : item) ?? null);
+  };
   const setReminder = async () => {
     const reminderDate = reminderDateTime(reminderDay, reminderTime);
     if (!selected || !reminderDay || !reminderTime || !reminderDate) return setReminderError("Choose both a reminder date and time. A time is never added automatically.");
     if (reminderDate <= new Date()) return setReminderError("Choose a future date and time.");
-    setReminderError(null);
-    const previous = notificationMap[String(selected.id)];
+    if (reminderBusy) return;
+    setReminderError(null); setReminderMessage(null); setReminderBusy(true);
+    const memory = selected;
+    const wasUpdate = !!memory.reminder_at;
+    const locallyStored = notificationMap[String(memory.id)];
+    const previous = locallyStored ?? (memory.reminder_at && memory.reminder_notification_id ? { notification_id: memory.reminder_notification_id, reminder_at: memory.reminder_at } : undefined);
     let newNotificationId: string | null = null;
     try {
       const permission = await Notifications.getPermissionsAsync();
       const granted = permission.granted || (await Notifications.requestPermissionsAsync()).granted;
       if (!granted) { setReminderError("Notification permission was denied. No local notification was created."); return; }
-      if (previous) await Notifications.cancelScheduledNotificationAsync(previous.notification_id);
-      newNotificationId = await Notifications.scheduleNotificationAsync({ content: { title: selected.title, body: "Memory reminder", data: { memoryId: selected.id } }, trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: reminderDate } });
-      await persistNotificationMap({ ...notificationMap, [selected.id]: { notification_id: newNotificationId, reminder_at: reminderDate.toISOString() } });
-      try {
-        const saved = await request(`/memories/${selected.id}/reminder`, { method: "PUT", body: JSON.stringify({ reminder_at: reminderDate.toISOString() }) });
-        delete reminderDrafts.current[selected.id];
-        setReminderTouched(false);
-        setSelected({ ...selected, reminder_at: saved.reminder_at });
-      } catch (error) {
-        console.error("backend reminder save failed", error);
-        await Notifications.cancelScheduledNotificationAsync(newNotificationId);
-        await clearNotificationMetadata(selected.id);
-        setReminderError(`Unable to save the reminder. The local notification was cancelled: ${String(error)}`);
-      }
+      newNotificationId = await Notifications.scheduleNotificationAsync({ content: { title: memory.title, body: "Memory reminder", data: { memoryId: memory.id }, sound: "default" }, trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: reminderDate, channelId: "memory-reminders" } });
+      const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+      if (!scheduled.some((item) => item.identifier === newNotificationId)) throw new Error("The new notification was not found in the scheduled notification list.");
+      const saved = await request(`/memories/${memory.id}/reminder`, { method: "PUT", body: JSON.stringify({ reminder_at: reminderDate.toISOString(), notification_id: newNotificationId }) });
+      const nextMap = { ...notificationMap, [memory.id]: { notification_id: newNotificationId, reminder_at: saved.reminder_at } };
+      await persistNotificationMap(nextMap);
+      if (previous && previous.notification_id !== newNotificationId) await Notifications.cancelScheduledNotificationAsync(previous.notification_id);
+      delete reminderDrafts.current[memory.id];
+      const persisted = { ...memory, reminder_at: saved.reminder_at, reminder_notification_id: saved.notification_id };
+      showPersistedReminder(persisted);
+      updateMemoryCaches(persisted);
+      const successMessage = wasUpdate ? "Reminder updated" : "Reminder set";
+      setReminderMessage(successMessage);
     } catch (error) {
       console.error("notification scheduling or persistence failed", error);
       if (newNotificationId) { try { await Notifications.cancelScheduledNotificationAsync(newNotificationId); } catch (rollbackError) { console.error("notification rollback failed", rollbackError); } }
-      try { await clearNotificationMetadata(selected.id); } catch (storageError) { console.error("notification metadata cleanup failed", storageError); }
-      setReminderError(`Unable to schedule the local notification: ${String(error)}`);
-    }
+      try {
+        if (memory.reminder_at) {
+          await request(`/memories/${memory.id}/reminder`, { method: "PUT", body: JSON.stringify({ reminder_at: memory.reminder_at, notification_id: previous?.notification_id ?? memory.reminder_notification_id ?? null }) });
+        } else {
+          await request(`/memories/${memory.id}/reminder`, { method: "DELETE" });
+        }
+      } catch (rollbackError) { console.error("backend reminder rollback failed", rollbackError); }
+      try {
+        const restoredMap = { ...notificationMap };
+        if (previous) restoredMap[String(memory.id)] = previous; else delete restoredMap[String(memory.id)];
+        await persistNotificationMap(restoredMap);
+      } catch (storageError) { console.error("notification metadata rollback failed", storageError); }
+      try { const refreshed = await request(`/memories/${memory.id}`); showPersistedReminder(refreshed); updateMemoryCaches(refreshed); } catch (refreshError) { console.error("reminder refresh failed", refreshError); showPersistedReminder(memory); }
+      setReminderError(`Reminder update failed. The previously saved reminder is still shown: ${String(error)}`);
+    } finally { setReminderBusy(false); }
   };
-  const cancelReminder = async () => { if (!selected) return; const previous = notificationMap[String(selected.id)]; try { if (previous) await Notifications.cancelScheduledNotificationAsync(previous.notification_id); await request(`/memories/${selected.id}/reminder`, { method: "DELETE" }); await clearNotificationMetadata(selected.id); delete reminderDrafts.current[selected.id]; setReminderDay(null); setReminderTime(null); setReminderTouched(false); setSelected({ ...selected, reminder_at: null }); setReminderError(null); } catch (error) { console.error("reminder cancellation failed", error); setReminderError("Unable to cancel the reminder. Please try again."); } };
+  const cancelReminder = async () => { if (!selected) return; const previous = notificationMap[String(selected.id)] ?? (selected.reminder_at && selected.reminder_notification_id ? { notification_id: selected.reminder_notification_id, reminder_at: selected.reminder_at } : undefined); try { if (previous) await Notifications.cancelScheduledNotificationAsync(previous.notification_id); await request(`/memories/${selected.id}/reminder`, { method: "DELETE" }); await clearNotificationMetadata(selected.id); delete reminderDrafts.current[selected.id]; setReminderDay(null); setReminderTime(null); setReminderTouched(false); setSelected({ ...selected, reminder_at: null, reminder_notification_id: null }); setReminderError(null); setReminderMessage(null); } catch (error) { console.error("reminder cancellation failed", error); setReminderError("Unable to cancel the reminder. Please try again."); } };
   if (screen === "capture" && selected) return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView>
     <Text style={styles.title}>Review Image Memory</Text>
     <Text style={styles.status}>The image and recognized content are preserved. Final content changes only after confirmation.</Text>
@@ -430,14 +467,14 @@ function AppContent() {
       {reminderDay && <Text style={styles.selectedTime}>Reminder date ({selected.reminder_at ? "set" : "not saved"}): {reminderDay}</Text>}
       {reminderTime && <Text style={styles.selectedTime}>Time: {reminderTime}</Text>}
       {reminderDay && !reminderTime && <Text style={styles.warning}>Choose a specific time before setting the reminder.</Text>}
-      <Button title={selected.reminder_at ? "Update Reminder" : "Set Reminder"} onPress={setReminder} />
+      <Button title={reminderBusy ? "Saving Reminder…" : reminderMessage === "Reminder updated" ? "Reminder updated" : selected.reminder_at ? "Update Reminder" : "Set Reminder"} onPress={setReminder} disabled={reminderBusy} />
       {selected.reminder_at && <Button title="Cancel Reminder" color="#b00020" onPress={cancelReminder} />}
       {reminderError && <Text style={styles.error}>{reminderError}</Text>}
     </View>
     <Button title="Save Changes" onPress={save} /><Button title="Cancel" onPress={() => setScreen("detail")} />
   </ScrollView></SafeAreaView>;
   if (screen === "form") return <Form draft={draft} setDraft={setDraft} onSave={save} onCancel={() => setScreen(selected ? "detail" : "list")} editing={!!selected} />;
-  if (screen === "detail" && selected) return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView contentContainerStyle={styles.scrollContent}><Text style={styles.eyebrow}>MEMORY DETAILS</Text><Text style={styles.title}>{selected.title} <Text style={styles.titleDate}>· {memoryDate(selected.created_at)}</Text></Text><Text style={styles.meta}>{selected.category || "Uncategorised"}</Text><TagChips tags={selected.tags} /><View style={styles.headerActions}><View style={styles.actionItem}><Button title="Edit" onPress={openEdit} disabled={visionBusy} /></View><View style={styles.actionItem}><Button title="Back to List" onPress={() => setScreen("list")} disabled={visionBusy} /></View></View><View style={styles.contentCard}><Text style={styles.sectionTitle}>Final Memory Content</Text><Text style={styles.content}>{selected.confirmed_content}</Text></View><View style={styles.imageCard}><View style={styles.imageButtonRow}><View style={styles.actionItem}><Button title={imageLoading ? "Processing…" : "Add or Replace Image"} onPress={chooseImage} disabled={imageLoading || visionBusy} /></View>{selected.source_image_path && <View style={styles.actionItem}><Button title={showSavedImage ? "Hide Image" : "Preview Image"} onPress={() => setShowSavedImage(!showSavedImage)} /></View>}</View>{selected.source_image_filename && <Text style={styles.supportingText}>Attached: {selected.source_image_filename}</Text>}{selected.source_image_path && <Button title="Reanalyse with OpenAI" onPress={confirmReanalyzeImage} disabled={captureBusy || imageLoading} />}{showSavedImage && selected.source_image_path && <Image style={styles.sourceImage} source={{ uri: `${API_URL}/memories/${selected.id}/image/file` }} resizeMode="contain" />}
+  if (screen === "detail" && selected) return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView contentContainerStyle={styles.scrollContent}><Text style={styles.eyebrow}>MEMORY DETAILS</Text><Text style={styles.title}>{selected.title} <Text style={styles.titleDate}>· {memoryDate(selected.created_at)}</Text></Text><Text style={styles.meta}>{selected.category || "Uncategorised"}</Text><TagChips tags={selected.tags} /><View style={styles.headerActions}><View style={styles.actionItem}><Button title="Edit" onPress={openEdit} disabled={visionBusy} /></View><View style={styles.actionItem}><Button title="Back to List" onPress={() => setScreen("list")} disabled={visionBusy} /></View></View><View style={styles.contentCard}><Text style={styles.sectionTitle}>Final Memory Content</Text><Text style={styles.content}>{selected.confirmed_content}</Text></View><View style={styles.imageCard}><View style={styles.imageButtonRow}><View style={styles.actionItem}><Button title={imageLoading ? "Processing…" : "Add or Replace Image"} onPress={chooseImage} disabled={imageLoading || visionBusy} nowrap /></View>{selected.source_image_path && <View style={styles.actionItem}><Button title={showSavedImage ? "Hide Image" : "Preview Image"} onPress={() => setShowSavedImage(!showSavedImage)} nowrap /></View>}</View>{selected.source_image_filename && <Text style={styles.supportingText}>Attached: {selected.source_image_filename}</Text>}{selected.source_image_path && <Button title="Reanalyse with OpenAI" onPress={confirmReanalyzeImage} disabled={captureBusy || imageLoading} />}{showSavedImage && selected.source_image_path && <Image style={styles.sourceImage} source={{ uri: `${API_URL}/memories/${selected.id}/image/file` }} resizeMode="contain" />}
 {visionReview && <View style={styles.aiCard}><Text style={styles.aiTitle}>Analysis Draft · Review Required</Text>
   <Text style={styles.aiLabel}>Title</Text><TextInput style={styles.input} value={captureTitle} onChangeText={(title) => { setCaptureTitle(title); titleTouched.current = true; }} maxLength={200} />
   <VisionFields key={visionReview.draft_id} value={visionReview.draft} onChange={reviewVisionFields} disabled={captureBusy} />
@@ -454,7 +491,7 @@ function AppContent() {
 {reminderDay && <Text style={styles.selectedTime}>Reminder date ({selected.reminder_at ? "set" : "not saved"}): {reminderDay}</Text>}
 {reminderTime && <Text style={styles.selectedTime}>Time: {reminderTime}</Text>}
 {reminderDay && !reminderTime && <Text style={styles.warning}>Choose a specific time before setting the reminder.</Text>}
-<Button title={selected.reminder_at ? "Update Reminder" : "Set Reminder"} onPress={setReminder} />
+<Button title={reminderBusy ? "Saving Reminder…" : reminderMessage === "Reminder updated" ? "Reminder updated" : selected.reminder_at ? "Update Reminder" : "Set Reminder"} onPress={setReminder} disabled={reminderBusy} />
 {selected.reminder_at && <Button title="Cancel Reminder" color="#b00020" onPress={cancelReminder} />}
 {reminderError && <Text style={styles.error}>{reminderError}</Text>}</View>{!selected.source_image_path && <><Button title={aiLoading ? "Generating…" : "Generate AI Draft"} onPress={generateAI} disabled={aiLoading} />{aiDraft?.draft && <View style={styles.aiCard}><Text style={styles.aiTitle}>AI Draft · Confirmation Required</Text><Text style={styles.aiLabel}>Summary</Text>{reviewEditing ? <TextInput style={[styles.input, styles.multiline]} multiline value={aiDraft.draft.summary} onChangeText={(summary) => setAiDraft({ ...aiDraft, draft: { ...aiDraft.draft!, summary } })} /> : <Text style={styles.content}>{aiDraft.draft.summary}</Text>}<Text style={styles.aiLabel}>Category: {aiDraft.draft.category.value} · Confidence {Math.round(aiDraft.draft.category.confidence * 100)}% · {aiDraft.draft.category.uncertain ? "uncertain" : "likely"}</Text><Text style={styles.aiLabel}>Tags: {aiDraft.draft.tags.map((tag) => tag.value).join(", ")}</Text>{aiDraft.warnings.map((warning) => <Text key={warning} style={styles.warning}>Note: {warning}</Text>)}<Button title="Accept AI Draft" onPress={acceptAI} /><Button title="Edit Draft Content" onPress={() => setReviewEditing(true)} /><Button title="Reject AI Draft" color="#b00020" onPress={rejectAI} /></View>}</>}<Button title="Delete Memory" color="#b00020" onPress={remove} disabled={visionBusy} /></ScrollView></SafeAreaView>;
   const tagChoices = availableTags(memories);
@@ -545,6 +582,7 @@ const styles = StyleSheet.create({
   status: { color: "#65716b", lineHeight: 20, marginVertical: 8 },
   resultCount: { color: "#65716b", fontSize: 13, fontWeight: "600", marginVertical: 8 },
   error: { color: "#9f2430", lineHeight: 20 },
+  success: { color: "#245b3f", lineHeight: 20, fontWeight: "700" },
   errorCard: { backgroundColor: "#fff1f2", borderColor: "#f0c4c9", borderWidth: 1, borderRadius: 12, padding: 12, gap: 8, marginVertical: 8 },
   emptyState: { backgroundColor: "#ffffff", alignItems: "center", borderRadius: 16, borderWidth: 1, borderColor: "#e1e6e3", padding: 24, gap: 8 },
   emptyTitle: { color: "#26332d", fontSize: 18, fontWeight: "700" },
