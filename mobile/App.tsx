@@ -6,8 +6,9 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as ImagePicker from "expo-image-picker";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
-import { APIError, visionRequestError } from "./apiErrors";
+import { visionRequestError } from "./apiErrors";
 import { availableTags, displayTags, filterByTags } from "./tagFilter";
+import { API_URL, request } from "./api/client";
 import { mapVisionEnvelope, visibleVisionFields, visionKeys, reminderSuggestion, suggestReminderIfUntouched, emptyVisionDraft, categoryFields, type VisionDraft, type VisionEnvelope, type VisionFieldKey } from "./visionDraft";
 
 const restoreVisionDraft = (raw: string): VisionEnvelope | null => mapVisionEnvelope(JSON.parse(raw));
@@ -16,7 +17,6 @@ type AIDraftField = { value: string; confidence: number; uncertain: boolean };
 type AIDraft = { summary: string; category: AIDraftField; tags: AIDraftField[] };
 type AIAssistResponse = { memory_id: number; ai_status: string; draft?: AIDraft; warnings: string[]; error?: string | null };
 type Draft = { title: string; original_text: string; category: string; tags: string };
-const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://127.0.0.1:8000";
 const emptyDraft: Draft = { title: "", original_text: "", category: "", tags: "" };
 const localDay = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const localTime = (date: Date) => `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
@@ -28,16 +28,6 @@ const reminderDateTime = (day: string | null, time: string | null): Date | null 
   const value = new Date(year, month - 1, date, hour, minute);
   return localDay(value) === day && localTime(value) === time ? value : null;
 };
-
-async function request(path: string, options?: RequestInit) {
-  const response = await fetch(`${API_URL}${path}`, { headers: { "Content-Type": "application/json" }, ...options });
-  if (!response.ok) {
-    let detail: unknown;
-    try { detail = (await response.json()).detail; } catch { detail = undefined; }
-    throw new APIError(response.status, detail);
-  }
-  return response.status === 204 ? null : response.json();
-}
 
 function uploadImage(memoryId: number, uri: string, name: string, type: string): Promise<Memory> {
   return new Promise((resolve, reject) => {

@@ -1,0 +1,8 @@
+import React from "react";
+import { Text, TouchableOpacity, View } from "react-native";
+import { TagList } from "./TagList";
+
+export function MemoryCard({ memory, onPress }: { memory: { id: number; title: string; created_at: string; category?: string | null; confirmed_content: string; original_text: string; source_image_path?: string | null; confirmation_status: string; tags: string[] }; onPress: () => void }) {
+  const date = new Intl.DateTimeFormat("en-NZ", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(memory.created_at));
+  return <TouchableOpacity style={{ padding: 16, backgroundColor: "#fff", borderWidth: 1, borderColor: "#e1e6e3", borderRadius: 16, marginBottom: 10 }} onPress={onPress} activeOpacity={0.72}><View style={{ flexDirection: "row", gap: 8 }}><Text style={{ color: "#17201c", flex: 1, fontSize: 18, lineHeight: 23, fontWeight: "700" }} numberOfLines={2}>{memory.title} <Text style={{ color: "#718078", fontSize: 12 }}>· {date}</Text></Text>{memory.confirmation_status === "draft" && <Text style={{ color: "#7a5200", backgroundColor: "#fff2ce", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, fontSize: 12, fontWeight: "700" }}>Draft</Text>}</View>{memory.category && <Text style={{ color: "#527060", fontSize: 13, fontWeight: "600", marginTop: 5 }}>{memory.category}</Text>}<Text numberOfLines={2} style={{ color: "#4d5953", fontSize: 15, lineHeight: 22, marginTop: 8 }}>{memory.confirmed_content || (memory.source_image_path ? "Image draft — open to continue reviewing" : memory.original_text)}</Text><View style={{ marginTop: 12 }}><TagList tags={memory.tags} /></View></TouchableOpacity>;
+}
