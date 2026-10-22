@@ -1,84 +1,168 @@
-# AI Personal Memory M2 Local Backend
+# AI Personal Memory
 
-Minimal local FastAPI + PostgreSQL Memory CRUD backend. It uses a fixed local development user with optional user-approved OpenAI image analysis. It does not connect to AWS.
+A mobile-first personal document memory library for storing bills, receipts, notices, and other important documents that need to be found later.
 
-## Local run
+The project currently runs locally with a React Native + Expo mobile app, a FastAPI backend, and PostgreSQL. The current milestone is **M5: AWS cloud integration and deployment**. AWS resources are not connected yet, and no potentially billable cloud resources will be created without explicit approval.
+
+## Features
+
+- Create, view, edit, and delete Memory records manually
+- Import document images from the camera or photo library
+- Run OCR locally while preserving the original image and recognized text
+- Generate structured field drafts with OpenAI only after explicit user consent
+- Review and confirm titles, dates, amounts, locations, purposes, and other fields
+- Search by keywords and filter by tags
+- Create one-time reminders delivered through Expo local notifications
+- Preserve original sources by default; deletion remains user-controlled
+- Continue with manual editing and saving when AI recognition fails
+
+### Planned AI Q&A
+
+Future versions are planned to include an AI Q&A feature powered by RAG (Retrieval-Augmented Generation). Users will be able to ask natural-language questions about their saved and confirmed Memories, such as “Which event notices did I save last month?” or “Where is the Craftadian handmade market being held?”. The system will first retrieve relevant content from the user’s own Memories, confirmed text, and structured fields, then generate an answer grounded in those sources.
+
+This feature has not been implemented yet. The current image recognition and keyword search features are not RAG. The planned design principles are:
+
+- Retrieve only content that the current user is authorized to access
+- Prefer user-confirmed fields and text; never treat an AI draft as a fact
+- Show the Memory or original document sources used for an answer
+- Clearly say when there is not enough evidence instead of guessing or filling gaps
+- Keep original images preserved while allowing vector indexes or retrieval data to be deleted independently
+- Evaluate local vector search, managed retrieval services, and PostgreSQL extensions before selecting the final implementation
+
+## Screenshots
+
+These screenshots show the main flow from browsing Memories and reviewing extracted content to setting a reminder and receiving a local notification.
+
+### Memory list
+
+![Memory list](docs/screenshots/memory-list.png)
+
+### Review extracted AI fields
+
+![Review extracted fields](docs/screenshots/review-fields.png)
+
+### Memory details and one-time reminder
+
+![Memory detail and reminder](docs/screenshots/memory-detail-reminder.png)
+
+### Local notification
+
+![Local reminder notification](docs/screenshots/notification-reminder.png)
+
+## Architecture
+
+```text
+Expo / React Native / TypeScript
+              │ HTTP + multipart upload
+              ▼
+FastAPI / Python
+       ├── PostgreSQL: Memories, tags, reminders, and recognition status
+       ├── Local OCR: Tesseract
+       └── Optional AI: OpenAI (server-side only)
+```
+
+The target cloud architecture is AWS RDS PostgreSQL, S3, Cognito, and Lambda + API Gateway. The codebase includes a Lambda/Mangum adapter, but cloud deployment and resource configuration are still planned work within M5.
+
+## Project structure
+
+```text
+app/                    FastAPI application, models, routes, and services
+  routes/               Memory, image, AI, vision, and reminder endpoints
+  services/             OCR, AI, tagging, and category logic
+  adapters/             Lambda/Mangum adapter
+mobile/                 Expo React Native application
+tests/                  Backend tests
+mobile/tests/           Mobile unit tests
+uploads/                Local development upload directory
+```
+
+## Local development
+
+### 1. Prepare PostgreSQL
+
+Create a local database and user, for example `memory_dev` and `memory_user`.
+
+### 2. Configure backend environment variables
 
 ```sh
-export DATABASE_URL='postgresql+psycopg://memory_user:实际密码@127.0.0.1:5432/memory_dev'
+export DATABASE_URL='postgresql+psycopg://memory_user:your-local-password@127.0.0.1:5432/memory_dev'
+export LOCAL_USER_ID='local-dev-user'
+```
+
+To enable AI recognition, set the key only in the backend environment:
+
+```sh
+export OPENAI_API_KEY='your-key'
+export OPENAI_VISION_MODEL='gpt-4.1-nano-2025-04-14'
+```
+
+Never put `OPENAI_API_KEY` in `EXPO_PUBLIC_*`, mobile configuration, source files, or logs.
+
+### 3. Start the API
+
+```sh
 .venv/bin/uvicorn app.main:app --reload
 ```
 
-## Tests
+The API is available at `http://127.0.0.1:8000`. The health check is `/health`, and the interactive API documentation is `/docs`.
+
+### 4. Start the Expo app
+
+```sh
+cd mobile
+npm install
+npm start
+```
+
+The mobile app uses `http://127.0.0.1:8000` by default. If a physical device cannot reach the computer's localhost, set `EXPO_PUBLIC_API_URL` to the computer's local network address:
+
+```sh
+EXPO_PUBLIC_API_URL=http://<computer-lan-address>:8000 npm start
+```
+
+You can also use `npm run ios`, `npm run android`, or `npm run web`.
+
+## Tests and checks
 
 ```sh
 .venv/bin/pytest -q
+cd mobile && npm run typecheck && npm test
 ```
 
-The API is available at `http://127.0.0.1:8000`. Use `/docs` for the local API interface.
+Automated tests never call the real OpenAI API. Backend tests should use an isolated test database; tests involving Memories may clean up test records.
 
+## Image recognition flow
 
-## Create a Memory from a photo
+1. The user selects an image from the camera or photo library.
+2. The mobile app converts unsupported formats, including HEIC/HEIF, to JPEG.
+3. The backend preserves the original source and creates a draft Memory.
+4. Tesseract runs OCR locally.
+5. OCR text is sent to OpenAI for structured analysis only after explicit user consent.
+6. AI-generated titles and fields remain drafts until the user reviews and confirms them.
+7. A recognition failure does not delete the image; the user can still complete and save the Memory manually.
 
-The home screen offers camera and photo-library actions. A selected image creates
-a persisted **draft** Memory with its managed local image; no separate blank
-Memory form is needed. With the user's consent, Tesseract runs locally and its
-recognized text is sent once to OpenAI for structured analysis. The editable
-field form appears directly; raw local OCR text is retained but not displayed.
-OCR or analysis failure keeps the image draft available for manual editing.
-The user confirms title and reviewed fields together using one save action.
-Reopening a draft or confirmed Memory reads saved results without an AI call.
-Only an explicit “使用 OpenAI 重新识别并分析” action sends the image itself to
-OpenAI for one combined recognition and analysis request.
+Re-analysis is an explicit user action. Opening a saved Memory does not automatically trigger an AI request.
 
-The new local endpoints are `POST /memories/from-image`, `GET
-/memories/{id}/image/file`, `POST /memories/{id}/image/analyze-draft` and
-`POST /memories/{id}/image/finalize`, plus the explicit image-based
-`POST /memories/{id}/image/reanalyze`. The existing two-stage routes remain
-available for compatibility. A recognized date and time are suggestions for the reminder form;
-no reminder is scheduled until the user sets it. iOS HEIC/HEIF and other
-unsupported selected formats are converted locally to JPEG before upload.
+## Privacy and security boundaries
 
-## Optional OpenAI text recognition and analysis (M3.9)
+- AI keys must exist only in the backend environment.
+- Original images and text are preserved by default; deletion requires an explicit user action.
+- AI output never becomes final data automatically; recognition results require human review.
+- Missing values remain empty. The system does not infer locations, addresses, or purposes from GPS or context.
+- The current default is a fixed local development user and is not a production authentication design.
+- Multi-user sharing, automatic email/SMS access, and complex offline synchronization are not currently included.
 
-Start the backend from the same terminal that securely exports a valid
-`OPENAI_API_KEY`. Never put this key in `EXPO_PUBLIC_*`, mobile configuration,
-source files or logs. No new Python dependency is needed.
-`OPENAI_VISION_MODEL` defaults to `gpt-4.1-nano-2025-04-14`.
+## Current status and roadmap
 
-The current mobile image creation flow uses local Tesseract followed by
-one OpenAI text-analysis request, then a reviewed field form. A separate,
-explicit re-recognition action sends the managed image once to OpenAI and
-returns both a transcription draft and structured fields. Legacy two-stage
-endpoints remain available for compatibility. Mock parsing remains optional.
+- M0–M4: Completed and accepted
+- M5: AWS cloud integration and deployment, in progress
+- M6: Security, privacy, reliability, and release testing
+- M7: Beta testing and release
+- V2: Cross-device synchronization
+- Future: RAG retrieval and AI Q&A over personal documents
 
-- `POST /memories/{id}/image/recognize`: `{consent: true, request_id}`.
-- `POST /memories/{id}/image/analyze`: `{consent: true, request_id, text_confirmed: true, text}`.
-- `POST /memories/{id}/image/vision/accept`: `{draft_id, draft}` (reviewed fields).
-- `DELETE /memories/{id}/image/vision`: reject the pending analysis draft.
-- `POST /memories/{id}/image/text/save`: `{text_confirmed: true, text, source_image_path}`;
-  explicit manual save without calling AI, preserves original text/image.
-- The old single-step `/image/vision` POST returns 410 and makes no AI request.
+V1 does not include RAG, AI Q&A, recurring reminders, automatic email/SMS access, website scraping, multi-user sharing, or professional legal, medical, or financial advice. Natural-language Q&A is planned for a later version and does not imply that a cloud model or vector database dependency exists today.
 
-Location name, address and purpose are nullable, reviewed fields: extract only
-what the document explicitly says, with no GPS access or place inference.
-Recognition and reviewed text use separate `image_text_draft` and
-`confirmed_image_text` columns. The latter is persisted only after explicit save.
+## License
 
-Limits: one global in-flight request, 15-second cooldown for the same stage on
-one Memory, 5 MB image, low image detail, 3,000 recognition output tokens,
-1,200 analysis output tokens, 12,000 text characters, 30-second network timeout,
-no automatic retries or provider fallback. The last request ID is deduplicated
-and cannot be reused for different stages or text.
-Model, usage, duration and sanitized errors are stored separately from draft data.
-These controls do not enforce an account-wide USD 5 spending cap; monitor API usage.
-
-Draft and confirmed visual fields are separate nullable JSON text columns on
-`memories`, initialized using the existing startup ALTER TABLE strategy. Only
-explicit acceptance changes final fields; stale drafts are rejected. No reminder
-is created. Original text and image are preserved. Missing values stay null;
-model extraction can still be wrong and requires human review.
-
-Tests mock OpenAI responses and must use an isolated database: existing CRUD
-tests delete Memory rows. Phone notification delivery and visual review still
-require manual testing. No live API test is included in the automatic suite.
+No open-source license has been declared. Public redistribution is not granted by default.
