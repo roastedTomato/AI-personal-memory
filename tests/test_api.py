@@ -1,3 +1,10 @@
+import os
+
+import pytest
+
+if not os.getenv("DATABASE_URL"):
+    pytest.skip("DATABASE_URL is required for API tests", allow_module_level=True)
+
 from fastapi.testclient import TestClient
 
 from app.main import app

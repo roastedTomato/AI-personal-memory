@@ -1,3 +1,10 @@
+import os
+
+import pytest
+
+if not os.getenv("DATABASE_URL"):
+    pytest.skip("DATABASE_URL is required for Lambda integration tests", allow_module_level=True)
+
 from app.adapters.lambda_handler import handler
 
 
