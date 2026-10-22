@@ -23,9 +23,10 @@ def validate_future(value: datetime) -> datetime:
 def set_reminder(memory_id: int, payload: ReminderWrite, db: Session = Depends(get_db)) -> ReminderRead:
     memory = owned_memory(db, memory_id)
     memory.reminder_at = validate_future(payload.reminder_at)
+    memory.reminder_notification_id = payload.notification_id
     db.commit()
     db.refresh(memory)
-    return ReminderRead(memory_id=memory.id, reminder_at=memory.reminder_at)
+    return ReminderRead(memory_id=memory.id, reminder_at=memory.reminder_at, notification_id=memory.reminder_notification_id)
 
 
 @router.get("/{memory_id}/reminder", response_model=ReminderRead)
@@ -33,11 +34,12 @@ def get_reminder(memory_id: int, db: Session = Depends(get_db)) -> ReminderRead:
     memory = owned_memory(db, memory_id)
     if memory.reminder_at is None:
         raise HTTPException(status_code=404, detail="Reminder not found")
-    return ReminderRead(memory_id=memory.id, reminder_at=memory.reminder_at)
+    return ReminderRead(memory_id=memory.id, reminder_at=memory.reminder_at, notification_id=memory.reminder_notification_id)
 
 
 @router.delete("/{memory_id}/reminder", status_code=status.HTTP_204_NO_CONTENT)
 def cancel_reminder(memory_id: int, db: Session = Depends(get_db)) -> None:
     memory = owned_memory(db, memory_id)
     memory.reminder_at = None
+    memory.reminder_notification_id = None
     db.commit()

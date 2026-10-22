@@ -42,6 +42,7 @@ class MemoryRead(BaseModel):
     ai_error: str | None
     ai_generated_at: datetime | None
     reminder_at: datetime | None
+    reminder_notification_id: str | None
     source_image_path: str | None
     source_image_filename: str | None
     source_image_mime_type: str | None
@@ -85,11 +86,13 @@ class AIAssistResponse(BaseModel):
 
 class ReminderWrite(BaseModel):
     reminder_at: datetime = Field()
+    notification_id: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 class ReminderRead(BaseModel):
     memory_id: int
     reminder_at: datetime
+    notification_id: str | None
 
 
 

@@ -23,6 +23,7 @@ class Memory(Base):
     ai_error: Mapped[str | None] = mapped_column(String(100), nullable=True)
     ai_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reminder_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reminder_notification_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     source_image_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_image_mime_type: Mapped[str | None] = mapped_column(String(100), nullable=True)

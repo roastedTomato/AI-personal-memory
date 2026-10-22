@@ -19,6 +19,7 @@ with engine.begin() as connection:
     connection.execute(text("ALTER TABLE memories ADD COLUMN IF NOT EXISTS ai_error VARCHAR(100)"))
     connection.execute(text("ALTER TABLE memories ADD COLUMN IF NOT EXISTS ai_generated_at TIMESTAMP WITH TIME ZONE"))
     connection.execute(text("ALTER TABLE memories ADD COLUMN IF NOT EXISTS reminder_at TIMESTAMP WITH TIME ZONE"))
+    connection.execute(text("ALTER TABLE memories ADD COLUMN IF NOT EXISTS reminder_notification_id VARCHAR(255)"))
     connection.execute(text("ALTER TABLE memories ADD COLUMN IF NOT EXISTS source_image_path VARCHAR(500)"))
     connection.execute(text("ALTER TABLE memories ADD COLUMN IF NOT EXISTS source_image_filename VARCHAR(255)"))
     connection.execute(text("ALTER TABLE memories ADD COLUMN IF NOT EXISTS source_image_mime_type VARCHAR(100)"))
