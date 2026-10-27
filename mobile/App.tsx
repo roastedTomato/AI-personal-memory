@@ -98,7 +98,6 @@ function AppContent() {
   const [question, setQuestion] = useState("");
   const [questionBusy, setQuestionBusy] = useState(false);
   const questionLock = useRef(false);
-  const [upcomingOnly, setUpcomingOnly] = useState(false);
   const [answer, setAnswer] = useState<{ status: string; answer: string; sources: { memory_id: number; title: string; event_date: string | null }[] } | null>(null);
   const [questionError, setQuestionError] = useState<string | null>(null);
   const askMemories = () => {
@@ -107,9 +106,9 @@ function AppContent() {
       { text: "Cancel", style: "cancel" },
       { text: "Continue", onPress: async () => {
         if (questionLock.current) return;
-        questionLock.current = true; setQuestionBusy(true); setQuestionError(null); setAnswer(null);
+        questionLock.current = true; setQuestionBusy(true); setQuestionError(null);
         try {
-          setAnswer(await request("/memories/query", { method: "POST", body: JSON.stringify({ question: question.trim(), consent: true, today: localDay(new Date()), upcoming_only: upcomingOnly }) }));
+          setAnswer(await request("/memories/query", { method: "POST", body: JSON.stringify({ question: question.trim(), consent: true, today: localDay(new Date()) }) }));
         } catch (error) { setQuestionError(`Unable to answer: ${String(error)} You can still use keyword search.`); }
         finally { questionLock.current = false; setQuestionBusy(false); }
       } },
@@ -469,9 +468,8 @@ function AppContent() {
     <Text style={styles.title}>Ask My Memories</Text>
     <Button title="Back to List" onPress={() => setScreen("list")} disabled={questionBusy} />
     <Text style={styles.supportingText}>Ask about your saved content. Answers include sources you can open.</Text>
-    <TextInput style={[styles.input, styles.multiline]} placeholder="What upcoming activities are related to sports?" value={question} maxLength={1000} editable={!questionBusy} onChangeText={(value) => { setQuestion(value); setAnswer(null); }} multiline />
-    <Button title={upcomingOnly ? "✓ Upcoming events only" : "Upcoming events only"} disabled={questionBusy} onPress={() => { setUpcomingOnly(!upcomingOnly); setAnswer(null); }} />
-    <Button title={questionBusy ? "Finding an answer…" : "Ask"} onPress={askMemories} disabled={questionBusy || !question.trim()} variant="primary" />
+    <TextInput style={[styles.input, styles.multiline]} placeholder="What upcoming activities are related to sports?" value={question} maxLength={1000} editable={!questionBusy} onChangeText={setQuestion} multiline />
+    <View style={styles.askButton}><Button title={questionBusy ? "Finding an answer…" : "Ask"} onPress={askMemories} disabled={questionBusy || !question.trim()} variant="primary" /></View>
     {questionError && <Text style={styles.error}>{questionError}</Text>}
     {answer && <View style={styles.contentCard}><MarkdownText value={answer.answer} />
       {answer.sources.map((source) => <Button key={source.memory_id} title={`[Memory ${source.memory_id}] ${source.title}${source.event_date ? ` · ${source.event_date}` : ""}`} onPress={async () => {
@@ -668,4 +666,5 @@ const styles = StyleSheet.create({
   multiline: { minHeight: 140, textAlignVertical: "top" },
   formCard: { backgroundColor: "#ffffff", borderRadius: 16, padding: 16, borderWidth: 1, borderColor: "#e1e6e3" },
   formActions: { gap: 8, marginTop: 14 },
+  askButton: { width: "100%", marginTop: 4 },
 });
