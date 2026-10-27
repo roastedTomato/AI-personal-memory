@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, FlatList, Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import * as Notifications from "expo-notifications";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -27,6 +27,7 @@ type AIDraftField = { value: string; confidence: number; uncertain: boolean };
 type AIDraft = { summary: string; category: AIDraftField; tags: AIDraftField[] };
 type AIAssistResponse = { memory_id: number; ai_status: string; draft?: AIDraft; warnings: string[]; error?: string | null };
 type Draft = { title: string; original_text: string; category: string; tags: string };
+type ChatMessage = { id: string; role: "user" | "assistant"; content: string; sources?: { memory_id: number; title: string; event_date: string | null }[] };
 const emptyDraft: Draft = { title: "", original_text: "", category: "", tags: "" };
 const localDay = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const localTime = (date: Date) => `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
@@ -101,6 +102,7 @@ function AppContent() {
   const [questionBusy, setQuestionBusy] = useState(false);
   const questionLock = useRef(false);
   const [answer, setAnswer] = useState<{ status: string; answer: string; sources: { memory_id: number; title: string; event_date: string | null }[] } | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [questionError, setQuestionError] = useState<string | null>(null);
   const askMemories = () => {
     if (!question.trim() || questionLock.current) return;
@@ -109,9 +111,11 @@ function AppContent() {
       { text: "Continue", onPress: async () => {
         if (questionLock.current) return;
         questionLock.current = true; setQuestionBusy(true); setQuestionError(null);
+        setChatMessages((messages) => [...messages, { id: `user-${Date.now()}`, role: "user", content: question.trim() }]);
         try {
-          setAnswer(await request("/memories/query", { method: "POST", body: JSON.stringify({ question: question.trim(), consent: true, today: localDay(new Date()) }) }));
-        } catch (error) { setQuestionError(`Unable to answer: ${String(error)} You can still use keyword search.`); }
+          const result = await request<{ status: string; answer: string; sources: { memory_id: number; title: string; event_date: string | null }[] }>("/memories/query", { method: "POST", body: JSON.stringify({ question: question.trim(), consent: true, today: localDay(new Date()) }) });
+          setAnswer(result); setChatMessages((messages) => [...messages, { id: `assistant-${Date.now()}`, role: "assistant", content: result.answer, sources: result.sources }]); setQuestion("");
+        } catch (error) { setQuestionError(`Unable to answer: ${String(error)} You can try again.`); }
         finally { questionLock.current = false; setQuestionBusy(false); }
       } },
     ]);
@@ -467,21 +471,7 @@ function AppContent() {
     } finally { setReminderBusy(false); }
   };
   const cancelReminder = async () => { if (!selected) return; const previous = notificationMap[String(selected.id)] ?? (selected.reminder_at && selected.reminder_notification_id ? { notification_id: selected.reminder_notification_id, reminder_at: selected.reminder_at } : undefined); try { if (previous) await Notifications.cancelScheduledNotificationAsync(previous.notification_id); await request(`/memories/${selected.id}/reminder`, { method: "DELETE" }); await clearNotificationMetadata(selected.id); delete reminderDrafts.current[selected.id]; setReminderDay(null); setReminderTime(null); setReminderTouched(false); setSelected({ ...selected, reminder_at: null, reminder_notification_id: null }); setReminderError(null); setReminderMessage(null); } catch (error) { console.error("reminder cancellation failed", error); setReminderError("Unable to cancel the reminder. Please try again."); } };
-  if (screen === "ask") return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-    <Text style={styles.title}>Ask My Memories</Text>
-    <Button title="Back to List" onPress={() => setScreen("list")} disabled={questionBusy} />
-    <Text style={styles.supportingText}>Ask about your saved content. Answers include sources you can open.</Text>
-    <TextInput style={[styles.input, styles.multiline]} placeholder="What upcoming activities are related to sports?" value={question} maxLength={1000} editable={!questionBusy} onChangeText={setQuestion} multiline />
-    <View style={styles.askButton}><Button title={questionBusy ? "Finding an answer…" : "Ask"} onPress={askMemories} disabled={questionBusy || !question.trim()} variant="primary" /></View>
-    {questionBusy && <View style={styles.askLoading}><ActivityIndicator size="small" color="#27634a" /><Text style={styles.supportingText}>Finding your answer…</Text></View>}
-    {questionError && <Text style={styles.error}>{questionError}</Text>}
-    {answer && <View style={styles.contentCard}><MarkdownText value={answer.answer} />
-      {answer.sources.map((source) => <Button key={source.memory_id} title={`[Memory ${source.memory_id}] ${source.title}${source.event_date ? ` · ${source.event_date}` : ""}`} onPress={async () => {
-        try { setDetailReturnScreen("ask"); openDetail(await request(`/memories/${source.memory_id}`)); }
-        catch { setQuestionError("This source is no longer available."); }
-      }} />)}
-    </View>}
-  </ScrollView></SafeAreaView>;
+  if (screen === "ask") return <AskChatScreen messages={chatMessages} question={question} questionBusy={questionBusy} questionError={questionError} onChangeQuestion={setQuestion} onAsk={askMemories} onBack={() => setScreen("list")} onRetry={askMemories} onOpenSource={async (source) => { try { setDetailReturnScreen("ask"); openDetail(await request(`/memories/${source.memory_id}`)); } catch { setQuestionError("This source is no longer available."); } }} />;
   if (screen === "capture" && selected) return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView>
     <Text style={styles.title}>Review Image Memory</Text>
     <Text style={styles.status}>The image and recognized content are preserved. Final content changes only after confirmation.</Text>
@@ -573,6 +563,12 @@ function MemoryListRedesign({ memories, tagChoices, selectedTags, searchKeyword,
     {!loading && !loadError && !memories.length ? <View style={styles.emptyState}><Text style={styles.emptyTitle}>{searchResults !== null || selectedTags.length > 0 ? "No Matches" : "Create Your First Memory"}</Text><Text style={styles.supportingText}>{searchResults !== null || selectedTags.length > 0 ? "Try another search or clear the filters." : "Tap + to add your first Memory."}</Text>{(searchResults !== null || selectedTags.length > 0) && <Button title="Clear All Filters" onPress={onClearFilters} />}</View> : <FlatList data={memories} contentContainerStyle={styles.listContent} keyExtractor={(item) => String(item.id)} renderItem={({ item }) => <TouchableOpacity style={styles.compactCard} onPress={() => onOpenMemory(item)} activeOpacity={0.72}><Text style={styles.compactCardTitle} numberOfLines={1}>{item.title}</Text><Text style={styles.compactCardMeta} numberOfLines={1}>{item.category || "Uncategorised"} · {memoryDate(item.event_date || item.created_at)}</Text><Text style={styles.compactCardContent} numberOfLines={2}>{item.confirmed_content || (item.source_image_path ? "Image draft — open to review" : item.original_text)}</Text><View style={styles.compactTags}>{displayTags(item.tags).slice(0, 3).map((tag) => <View key={tag} style={styles.compactTag}><Text style={styles.compactTagText} numberOfLines={1}>{tag}</Text></View>)}{displayTags(item.tags).length > 3 && <Text style={styles.moreTags}>+{displayTags(item.tags).length - 3}</Text>}</View></TouchableOpacity>} refreshing={loading} onRefresh={onRefresh} />}
     <View style={styles.bottomNav}><TouchableOpacity accessibilityRole="button" style={styles.bottomNavItem}><Text style={styles.bottomNavIcon}>▦</Text><Text style={styles.bottomNavActive}>Memories</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" onPress={onAsk} style={styles.bottomNavItem}><Text style={styles.bottomNavIcon}>✦</Text><Text style={styles.bottomNavText}>Ask AI</Text></TouchableOpacity></View><TouchableOpacity accessibilityRole="button" accessibilityLabel="Add Memory" onPress={onToggleAddMenu} style={styles.fab}><Text style={styles.fabText}>＋</Text></TouchableOpacity>
   </SafeAreaView>;
+}
+
+function AskChatScreen({ messages, question, questionBusy, questionError, onChangeQuestion, onAsk, onBack, onRetry, onOpenSource }: { messages: ChatMessage[]; question: string; questionBusy: boolean; questionError: string | null; onChangeQuestion: (value: string) => void; onAsk: () => void; onBack: () => void; onRetry: () => void; onOpenSource: (source: { memory_id: number; title: string; event_date: string | null }) => void }) {
+  const scrollRef = useRef<any>(null);
+  useEffect(() => { scrollRef.current?.scrollToEnd({ animated: true }); }, [messages.length, questionBusy]);
+  return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.chatScreen}><KeyboardAvoidingView style={styles.chatKeyboard} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={8}><View style={styles.chatHeader}><TouchableOpacity accessibilityRole="button" onPress={onBack} style={styles.backButton}><Text style={styles.backIcon}>‹</Text><Text style={styles.backLabel}>Back</Text></TouchableOpacity><Text style={styles.chatTitle}>Ask My Memories</Text><View style={{ width: 60 }} /></View><ScrollView ref={scrollRef} contentContainerStyle={styles.chatMessages} keyboardShouldPersistTaps="handled">{!messages.length && <View style={styles.chatWelcome}><Text style={styles.chatWelcomeTitle}>What would you like to remember?</Text><Text style={styles.supportingText}>Ask a question about your saved Memories.</Text></View>}{messages.map((message) => <View key={message.id} style={message.role === "user" ? styles.userBubble : styles.assistantMessage}>{message.role === "user" ? <Text style={styles.userBubbleText}>{message.content}</Text> : <><MarkdownText value={message.content} />{!!message.sources?.length && <View style={styles.sourceList}><Text style={styles.sourceHeading}>Sources</Text>{[...new Map(message.sources.map((source) => [source.memory_id, source])).values()].map((source) => <TouchableOpacity key={source.memory_id} accessibilityRole="button" onPress={() => onOpenSource(source)} style={styles.sourceCard}><Text style={styles.sourceTitle} numberOfLines={1}>{source.title}</Text><Text style={styles.sourceDate}>{source.event_date || "Memory source"}</Text><Text style={styles.sourceChevron}>›</Text></TouchableOpacity>)}</View>}</>}</View>)}{questionBusy && <View style={styles.chatLoading}><ActivityIndicator size="small" color="#27634a" /><Text style={styles.supportingText}>Finding your answer…</Text></View>}{questionError && <View style={styles.chatError}><Text style={styles.error}>{questionError}</Text><TouchableOpacity onPress={onRetry}><Text style={styles.retryText}>Try Again</Text></TouchableOpacity></View>}</ScrollView><View style={styles.chatComposer}><TextInput style={styles.chatInput} placeholder="Ask about your Memories" placeholderTextColor="#78828c" value={question} maxLength={1000} editable={!questionBusy} onChangeText={onChangeQuestion} multiline /><TouchableOpacity accessibilityRole="button" accessibilityLabel="Send question" onPress={onAsk} disabled={questionBusy || !question.trim()} style={[styles.sendButton, (questionBusy || !question.trim()) && styles.disabledSendButton]}><Text style={styles.sendIcon}>↑</Text></TouchableOpacity></View></KeyboardAvoidingView></SafeAreaView>;
 }
 
 function MemoryDetailRedesign({ memory, apiUrl, showImage, onToggleImage, onBack, onEdit, onDelete, onReanalyse, onAddImage, imageLoading, captureBusy, onOpenReminder }: { memory: Memory; apiUrl: string; showImage: boolean; onToggleImage: () => void; onBack: () => void; onEdit: () => void; onDelete: () => void; onReanalyse: () => void; onAddImage: () => void; imageLoading: boolean; captureBusy: boolean; onOpenReminder: () => void }) {
@@ -766,4 +762,28 @@ const styles = StyleSheet.create({
   formActions: { gap: 8, marginTop: 14 },
   askButton: { width: "100%", marginTop: 4 },
   askLoading: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12 },
+  chatScreen: { flex: 1, backgroundColor: "#f5f7f6" },
+  chatKeyboard: { flex: 1 },
+  chatHeader: { minHeight: 54, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1, borderBottomColor: "#e1e6e3" },
+  chatTitle: { color: "#17201c", fontSize: 17, fontWeight: "700" },
+  chatMessages: { paddingHorizontal: 16, paddingVertical: 18, paddingBottom: 24, flexGrow: 1 },
+  chatWelcome: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 28 },
+  chatWelcomeTitle: { color: "#26332d", fontSize: 20, fontWeight: "700", textAlign: "center", marginBottom: 6 },
+  userBubble: { alignSelf: "flex-end", maxWidth: "82%", backgroundColor: "#dcece4", borderRadius: 18, borderBottomRightRadius: 5, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 14 },
+  userBubbleText: { color: "#234d39", fontSize: 15, lineHeight: 21 },
+  assistantMessage: { alignSelf: "stretch", marginBottom: 18, paddingHorizontal: 2 },
+  sourceList: { marginTop: 10, gap: 7 },
+  sourceHeading: { color: "#527060", fontSize: 12, fontWeight: "800", letterSpacing: 0.7, textTransform: "uppercase" },
+  sourceCard: { flexDirection: "row", alignItems: "center", backgroundColor: "#ffffff", borderRadius: 11, paddingHorizontal: 11, paddingVertical: 9, borderWidth: 1, borderColor: "#e1e6e3" },
+  sourceTitle: { color: "#315f49", flex: 1, fontSize: 13, fontWeight: "700" },
+  sourceDate: { color: "#65716b", fontSize: 11, marginHorizontal: 8 },
+  sourceChevron: { color: "#6f9f88", fontSize: 22 },
+  chatLoading: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8 },
+  chatError: { backgroundColor: "#fff1f2", borderRadius: 11, padding: 11, marginBottom: 10 },
+  retryText: { color: "#a3202d", fontWeight: "700", marginTop: 6 },
+  chatComposer: { flexDirection: "row", alignItems: "flex-end", gap: 8, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 8, backgroundColor: "#ffffff", borderTopWidth: 1, borderTopColor: "#e1e6e3" },
+  chatInput: { flex: 1, maxHeight: 120, minHeight: 42, color: "#17201c", backgroundColor: "#f5f7f6", borderRadius: 20, paddingHorizontal: 15, paddingVertical: 10, fontSize: 15 },
+  sendButton: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: "#6f9f88" },
+  sendIcon: { color: "#ffffff", fontSize: 22, fontWeight: "700" },
+  disabledSendButton: { backgroundColor: "#cbd8d1" },
 });
