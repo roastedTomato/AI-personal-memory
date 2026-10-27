@@ -515,6 +515,7 @@ function AppContent() {
     <Button title="Save Changes" onPress={save} /><Button title="Cancel" onPress={() => setScreen("detail")} />
   </ScrollView></SafeAreaView>;
   if (screen === "form") return <Form draft={draft} setDraft={setDraft} onSave={save} onCancel={() => setScreen(selected ? "detail" : "list")} editing={!!selected} />;
+  if (screen === "detail" && selected) return <MemoryDetailRedesign memory={selected} apiUrl={API_URL} showImage={showSavedImage} onToggleImage={() => setShowSavedImage(!showSavedImage)} onBack={() => setScreen(detailReturnScreen)} onEdit={openEdit} onDelete={remove} onReanalyse={confirmReanalyzeImage} onAddImage={chooseImage} imageLoading={imageLoading} captureBusy={captureBusy} onOpenReminder={openEdit} />;
   if (screen === "detail" && selected) return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView contentContainerStyle={styles.scrollContent}><Text style={styles.eyebrow}>MEMORY DETAILS</Text><Text style={styles.title}>{selected.title} <Text style={styles.titleDate}>· {memoryDate(selected.created_at)}</Text></Text><Text style={styles.meta}>{selected.category || "Uncategorised"}</Text><TagChips tags={selected.tags} /><View style={styles.imageButtonRow}><View style={styles.actionItem}><Button title="Edit" onPress={openEdit} disabled={visionBusy} /></View><View style={styles.actionItem}><Button title="Back to List" onPress={() => setScreen("list")} disabled={visionBusy} /></View></View><View style={styles.contentCard}><Text style={styles.sectionTitle}>Memory Content</Text><MarkdownText value={selected.confirmed_content} /></View><View style={styles.imageCard}><View style={styles.imageButtonRow}><View style={styles.actionItem}><Button title={imageLoading ? "Processing…" : "Add or Replace Image"} onPress={chooseImage} disabled={imageLoading || visionBusy} nowrap /></View>{selected.source_image_path && <View style={styles.actionItem}><Button title={showSavedImage ? "Hide Image" : "Preview Image"} onPress={() => setShowSavedImage(!showSavedImage)} nowrap /></View>}</View>{selected.source_image_filename && <Text style={styles.supportingText}>Attached: {selected.source_image_filename}</Text>}{selected.source_image_path && <Button title="Reanalyse with OpenAI" onPress={confirmReanalyzeImage} disabled={captureBusy || imageLoading} />}{showSavedImage && selected.source_image_path && <Image style={styles.sourceImage} source={{ uri: `${API_URL}/memories/${selected.id}/image/file` }} resizeMode="contain" />}
 {visionReview && <View style={styles.aiCard}><Text style={styles.aiTitle}>Analysis Draft · Review Required</Text>
   <Text style={styles.aiLabel}>Title</Text><TextInput style={styles.input} value={captureTitle} onChangeText={(title) => { setCaptureTitle(title); titleTouched.current = true; }} maxLength={200} />
@@ -552,6 +553,23 @@ function AppContent() {
 
 export default function App() {
   return <SafeAreaProvider><AppContent /></SafeAreaProvider>;
+}
+
+function MemoryDetailRedesign({ memory, apiUrl, showImage, onToggleImage, onBack, onEdit, onDelete, onReanalyse, onAddImage, imageLoading, captureBusy, onOpenReminder }: { memory: Memory; apiUrl: string; showImage: boolean; onToggleImage: () => void; onBack: () => void; onEdit: () => void; onDelete: () => void; onReanalyse: () => void; onAddImage: () => void; imageLoading: boolean; captureBusy: boolean; onOpenReminder: () => void }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  let structured: Record<string, unknown> = {};
+  if (memory.confirmed_vision) { try { structured = JSON.parse(memory.confirmed_vision); } catch { structured = {}; } }
+  const fields = [["Event date", structured.date || memory.event_date], ["Due date", structured.due_date || memory.due_date], ["Location", structured.location_name || memory.location], ["Address", structured.location_address], ["Organisation", structured.institution], ["Amount", structured.amount ? `${structured.amount}${structured.currency ? ` ${structured.currency}` : ""}` : memory.amount ? `${memory.amount}${memory.currency ? ` ${memory.currency}` : ""}` : null]].filter(([, value]) => value);
+  return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView contentContainerStyle={styles.detailContent}>
+    <View style={styles.detailHeader}><TouchableOpacity accessibilityRole="button" onPress={onBack} style={styles.backButton}><Text style={styles.backIcon}>‹</Text><Text style={styles.backLabel}>Back</Text></TouchableOpacity><View style={styles.detailHeaderActions}><Button title="Edit" onPress={onEdit} compact /><TouchableOpacity accessibilityRole="button" onPress={() => setMenuOpen(!menuOpen)} style={styles.moreButton}><Text style={styles.moreIcon}>•••</Text></TouchableOpacity></View></View>
+    {menuOpen && <View style={styles.overflowMenu}><TouchableOpacity accessibilityRole="button" onPress={() => { setMenuOpen(false); onDelete(); }}><Text style={styles.deleteMenuText}>Delete Memory</Text></TouchableOpacity></View>}
+    <Text style={styles.detailTitle}>{memory.title}</Text><Text style={styles.detailMeta}>{memory.category || "Uncategorised"} · {memoryDate(memory.created_at)}</Text>
+    {memory.source_image_path && <View style={styles.detailImageSection}>{showImage ? <Image style={styles.detailImage} source={{ uri: `${apiUrl}/memories/${memory.id}/image/file` }} resizeMode="contain" /> : <View style={styles.imagePlaceholder}><Text style={styles.imagePlaceholderText}>Original image available</Text></View>}<View style={styles.detailImageActions}><Button title={showImage ? "Hide Image" : "Show Image"} onPress={onToggleImage} compact /><Button title={imageLoading ? "Processing…" : "Replace"} onPress={onAddImage} disabled={imageLoading || captureBusy} compact /></View></View>}
+    <View style={styles.detailSection}><Text style={styles.detailSectionTitle}>Content</Text><MarkdownText value={memory.confirmed_content || memory.original_text} /></View>
+    {!!fields.length && <View style={styles.detailSection}><Text style={styles.detailSectionTitle}>Important Information</Text>{fields.map(([label, value]) => <View key={String(label)} style={styles.structuredRow}><Text style={styles.structuredLabel}>{String(label)}</Text><Text style={styles.structuredValue}>{String(value)}</Text></View>)}</View>}
+    {!!displayTags(memory.tags).length && <View style={styles.detailSection}><Text style={styles.detailSectionTitle}>Tags</Text><TagChips tags={memory.tags} /></View>}
+    <TouchableOpacity accessibilityRole="button" onPress={onOpenReminder} style={styles.reminderSummary}><View><Text style={styles.detailSectionTitle}>Reminder</Text><Text style={styles.reminderSummaryText}>{memory.reminder_at ? `Set for ${new Date(memory.reminder_at).toLocaleString("en-NZ")}` : "No reminder set"}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>
+  </ScrollView></SafeAreaView>;
 }
 
 const visionLabels: Record<VisionFieldKey, string> = { summary: "Summary", category: "Category", tags: "Tags", amount: "Amount", currency: "Currency (ISO, e.g. NZD)", date: "Date (YYYY-MM-DD)", time: "Time (HH:MM)", due_date: "Due Date (YYYY-MM-DD)", institution: "Organisation", location_name: "Location Name", location_address: "Address", location_purpose: "Location Purpose" };
@@ -602,6 +620,31 @@ const markdownStyles = {
 const styles = StyleSheet.create({
   container: { flex: 1, paddingHorizontal: 18, paddingTop: 16, backgroundColor: "#f5f7f6" },
   scrollContent: { paddingBottom: 32 },
+  detailContent: { paddingBottom: 40 },
+  detailHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 44, marginBottom: 18 },
+  detailHeaderActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  backButton: { flexDirection: "row", alignItems: "center", paddingVertical: 6, paddingRight: 10 },
+  backIcon: { color: "#27634a", fontSize: 34, lineHeight: 30, fontWeight: "300" },
+  backLabel: { color: "#27634a", fontSize: 15, fontWeight: "600" },
+  moreButton: { width: 42, height: 40, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#c4d5cc" },
+  moreIcon: { color: "#315f49", fontSize: 16, letterSpacing: 2, fontWeight: "800" },
+  overflowMenu: { alignSelf: "flex-end", backgroundColor: "#ffffff", borderRadius: 12, padding: 12, marginTop: -10, marginBottom: 8, shadowColor: "#17201c", shadowOpacity: 0.12, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
+  deleteMenuText: { color: "#a3202d", fontWeight: "700", paddingHorizontal: 8, paddingVertical: 5 },
+  detailTitle: { color: "#17201c", fontSize: 25, lineHeight: 32, fontWeight: "700", marginBottom: 6 },
+  detailMeta: { color: "#65716b", fontSize: 14, marginBottom: 18 },
+  detailImageSection: { marginBottom: 18 },
+  detailImage: { width: "100%", height: 230, borderRadius: 14, backgroundColor: "#edf0ee" },
+  imagePlaceholder: { height: 88, borderRadius: 14, backgroundColor: "#e9f1ec", alignItems: "center", justifyContent: "center" },
+  imagePlaceholderText: { color: "#527060", fontSize: 14, fontWeight: "600" },
+  detailImageActions: { flexDirection: "row", gap: 8, marginTop: 8 },
+  detailSection: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: "#e1e6e3" },
+  detailSectionTitle: { color: "#27634a", fontSize: 12, fontWeight: "800", letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 8 },
+  structuredRow: { flexDirection: "row", justifyContent: "space-between", gap: 12, paddingVertical: 6 },
+  structuredLabel: { color: "#65716b", fontSize: 14, flex: 1 },
+  structuredValue: { color: "#27322d", fontSize: 15, fontWeight: "600", flex: 1.4, textAlign: "right" },
+  reminderSummary: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 16 },
+  reminderSummaryText: { color: "#4d5953", fontSize: 15 },
+  chevron: { color: "#6f9f88", fontSize: 28, fontWeight: "300" },
   eyebrow: { color: "#27634a", fontSize: 12, fontWeight: "700", letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 4 },
   title: { color: "#17201c", fontSize: 29, lineHeight: 37, fontWeight: "700", marginBottom: 14 },
   titleDate: { color: "#65716b", fontSize: 15, fontWeight: "600" },
