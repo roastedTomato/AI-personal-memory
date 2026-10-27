@@ -464,12 +464,13 @@ function AppContent() {
     } finally { setReminderBusy(false); }
   };
   const cancelReminder = async () => { if (!selected) return; const previous = notificationMap[String(selected.id)] ?? (selected.reminder_at && selected.reminder_notification_id ? { notification_id: selected.reminder_notification_id, reminder_at: selected.reminder_at } : undefined); try { if (previous) await Notifications.cancelScheduledNotificationAsync(previous.notification_id); await request(`/memories/${selected.id}/reminder`, { method: "DELETE" }); await clearNotificationMetadata(selected.id); delete reminderDrafts.current[selected.id]; setReminderDay(null); setReminderTime(null); setReminderTouched(false); setSelected({ ...selected, reminder_at: null, reminder_notification_id: null }); setReminderError(null); setReminderMessage(null); } catch (error) { console.error("reminder cancellation failed", error); setReminderError("Unable to cancel the reminder. Please try again."); } };
-  if (screen === "ask") return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView contentContainerStyle={styles.scrollContent}>
+  if (screen === "ask") return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
     <Text style={styles.title}>Ask My Memories</Text>
     <Button title="Back to List" onPress={() => setScreen("list")} disabled={questionBusy} />
     <Text style={styles.supportingText}>Ask about your saved content. Answers include sources you can open.</Text>
     <TextInput style={[styles.input, styles.multiline]} placeholder="What upcoming activities are related to sports?" value={question} maxLength={1000} editable={!questionBusy} onChangeText={setQuestion} multiline />
     <View style={styles.askButton}><Button title={questionBusy ? "Finding an answer…" : "Ask"} onPress={askMemories} disabled={questionBusy || !question.trim()} variant="primary" /></View>
+    {questionBusy && <View style={styles.askLoading}><ActivityIndicator size="small" color="#27634a" /><Text style={styles.supportingText}>Finding your answer…</Text></View>}
     {questionError && <Text style={styles.error}>{questionError}</Text>}
     {answer && <View style={styles.contentCard}><MarkdownText value={answer.answer} />
       {answer.sources.map((source) => <Button key={source.memory_id} title={`[Memory ${source.memory_id}] ${source.title}${source.event_date ? ` · ${source.event_date}` : ""}`} onPress={async () => {
@@ -667,4 +668,5 @@ const styles = StyleSheet.create({
   formCard: { backgroundColor: "#ffffff", borderRadius: 16, padding: 16, borderWidth: 1, borderColor: "#e1e6e3" },
   formActions: { gap: 8, marginTop: 14 },
   askButton: { width: "100%", marginTop: 4 },
+  askLoading: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12 },
 });
