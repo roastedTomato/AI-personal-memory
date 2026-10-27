@@ -21,7 +21,7 @@ Notifications.setNotificationHandler({
 });
 
 const restoreVisionDraft = (raw: string): VisionEnvelope | null => mapVisionEnvelope(JSON.parse(raw));
-type Memory = { image_text_draft?: string | null; confirmed_image_text?: string | null; vision_draft?: string | null; vision_metadata?: string | null; confirmed_vision?: string | null; id: number; title: string; original_text: string; confirmed_content: string; category?: string | null; tags: string[]; source_type: string; confirmation_status: string; reminder_at?: string | null; reminder_notification_id?: string | null; ocr_text?: string | null; ocr_status?: string | null; ocr_error?: string | null; ocr_duration_ms?: number | null; source_image_path?: string | null; source_image_filename?: string | null; source_image_mime_type?: string | null; source_image_size?: number | null; created_at: string; updated_at: string };
+type Memory = { image_text_draft?: string | null; confirmed_image_text?: string | null; vision_draft?: string | null; vision_metadata?: string | null; confirmed_vision?: string | null; id: number; title: string; original_text: string; confirmed_content: string; category?: string | null; tags: string[]; event_date?: string | null; due_date?: string | null; location?: string | null; amount?: number | string | null; currency?: string | null; source_type: string; confirmation_status: string; reminder_at?: string | null; reminder_notification_id?: string | null; ocr_text?: string | null; ocr_status?: string | null; ocr_error?: string | null; ocr_duration_ms?: number | null; source_image_path?: string | null; source_image_filename?: string | null; source_image_mime_type?: string | null; source_image_size?: number | null; created_at: string; updated_at: string };
 type AIDraftField = { value: string; confidence: number; uncertain: boolean };
 type AIDraft = { summary: string; category: AIDraftField; tags: AIDraftField[] };
 type AIAssistResponse = { memory_id: number; ai_status: string; draft?: AIDraft; warnings: string[]; error?: string | null };
@@ -89,7 +89,27 @@ function Button({ title, onPress, disabled = false, color, variant = "secondary"
 }
 
 function AppContent() {
-  const [screen, setScreen] = useState<"list" | "form" | "detail" | "capture">("list");
+  const [screen, setScreen] = useState<"list" | "form" | "detail" | "capture" | "ask">("list");
+  const [question, setQuestion] = useState("");
+  const [questionBusy, setQuestionBusy] = useState(false);
+  const questionLock = useRef(false);
+  const [upcomingOnly, setUpcomingOnly] = useState(false);
+  const [answer, setAnswer] = useState<{ status: string; answer: string; sources: { memory_id: number; title: string; event_date: string | null }[] } | null>(null);
+  const [questionError, setQuestionError] = useState<string | null>(null);
+  const askMemories = () => {
+    if (!question.trim() || questionLock.current) return;
+    Alert.alert("Ask your Memories", "Your question and up to five matching confirmed Memories will be sent to OpenAI to answer. Continue?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Continue", onPress: async () => {
+        if (questionLock.current) return;
+        questionLock.current = true; setQuestionBusy(true); setQuestionError(null); setAnswer(null);
+        try {
+          setAnswer(await request("/memories/query", { method: "POST", body: JSON.stringify({ question: question.trim(), consent: true, today: localDay(new Date()), upcoming_only: upcomingOnly }) }));
+        } catch (error) { setQuestionError(`Unable to answer: ${String(error)} You can still use keyword search.`); }
+        finally { questionLock.current = false; setQuestionBusy(false); }
+      } },
+    ]);
+  };
   const [memories, setMemories] = useState<Memory[]>([]);
   const [selected, setSelected] = useState<Memory | null>(null);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
@@ -440,6 +460,21 @@ function AppContent() {
     } finally { setReminderBusy(false); }
   };
   const cancelReminder = async () => { if (!selected) return; const previous = notificationMap[String(selected.id)] ?? (selected.reminder_at && selected.reminder_notification_id ? { notification_id: selected.reminder_notification_id, reminder_at: selected.reminder_at } : undefined); try { if (previous) await Notifications.cancelScheduledNotificationAsync(previous.notification_id); await request(`/memories/${selected.id}/reminder`, { method: "DELETE" }); await clearNotificationMetadata(selected.id); delete reminderDrafts.current[selected.id]; setReminderDay(null); setReminderTime(null); setReminderTouched(false); setSelected({ ...selected, reminder_at: null, reminder_notification_id: null }); setReminderError(null); setReminderMessage(null); } catch (error) { console.error("reminder cancellation failed", error); setReminderError("Unable to cancel the reminder. Please try again."); } };
+  if (screen === "ask") return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView contentContainerStyle={styles.scrollContent}>
+    <Text style={styles.title}>Ask My Memories</Text>
+    <Button title="Back to List" onPress={() => setScreen("list")} disabled={questionBusy} />
+    <Text style={styles.supportingText}>Ask about your saved content. Answers include sources you can open.</Text>
+    <TextInput style={[styles.input, styles.multiline]} placeholder="What upcoming activities are related to sports?" value={question} maxLength={1000} editable={!questionBusy} onChangeText={(value) => { setQuestion(value); setAnswer(null); }} multiline />
+    <Button title={upcomingOnly ? "✓ Upcoming events only" : "Upcoming events only"} disabled={questionBusy} onPress={() => { setUpcomingOnly(!upcomingOnly); setAnswer(null); }} />
+    <Button title={questionBusy ? "Finding an answer…" : "Ask"} onPress={askMemories} disabled={questionBusy || !question.trim()} variant="primary" />
+    {questionError && <Text style={styles.error}>{questionError}</Text>}
+    {answer && <View style={styles.contentCard}><Text selectable style={styles.content}>{answer.answer}</Text>
+      {answer.sources.map((source) => <Button key={source.memory_id} title={`[Memory ${source.memory_id}] ${source.title}${source.event_date ? ` · ${source.event_date}` : ""}`} onPress={async () => {
+        try { openDetail(await request(`/memories/${source.memory_id}`)); }
+        catch { setQuestionError("This source is no longer available."); }
+      }} />)}
+    </View>}
+  </ScrollView></SafeAreaView>;
   if (screen === "capture" && selected) return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView>
     <Text style={styles.title}>Review Image Memory</Text>
     <Text style={styles.status}>The image and recognized content are preserved. Final content changes only after confirmation.</Text>
@@ -474,7 +509,7 @@ function AppContent() {
     <Button title="Save Changes" onPress={save} /><Button title="Cancel" onPress={() => setScreen("detail")} />
   </ScrollView></SafeAreaView>;
   if (screen === "form") return <Form draft={draft} setDraft={setDraft} onSave={save} onCancel={() => setScreen(selected ? "detail" : "list")} editing={!!selected} />;
-  if (screen === "detail" && selected) return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView contentContainerStyle={styles.scrollContent}><Text style={styles.eyebrow}>MEMORY DETAILS</Text><Text style={styles.title}>{selected.title} <Text style={styles.titleDate}>· {memoryDate(selected.created_at)}</Text></Text><Text style={styles.meta}>{selected.category || "Uncategorised"}</Text><TagChips tags={selected.tags} /><View style={styles.headerActions}><View style={styles.actionItem}><Button title="Edit" onPress={openEdit} disabled={visionBusy} /></View><View style={styles.actionItem}><Button title="Back to List" onPress={() => setScreen("list")} disabled={visionBusy} /></View></View><View style={styles.contentCard}><Text style={styles.sectionTitle}>Final Memory Content</Text><Text style={styles.content}>{selected.confirmed_content}</Text></View><View style={styles.imageCard}><View style={styles.imageButtonRow}><View style={styles.actionItem}><Button title={imageLoading ? "Processing…" : "Add or Replace Image"} onPress={chooseImage} disabled={imageLoading || visionBusy} nowrap /></View>{selected.source_image_path && <View style={styles.actionItem}><Button title={showSavedImage ? "Hide Image" : "Preview Image"} onPress={() => setShowSavedImage(!showSavedImage)} nowrap /></View>}</View>{selected.source_image_filename && <Text style={styles.supportingText}>Attached: {selected.source_image_filename}</Text>}{selected.source_image_path && <Button title="Reanalyse with OpenAI" onPress={confirmReanalyzeImage} disabled={captureBusy || imageLoading} />}{showSavedImage && selected.source_image_path && <Image style={styles.sourceImage} source={{ uri: `${API_URL}/memories/${selected.id}/image/file` }} resizeMode="contain" />}
+  if (screen === "detail" && selected) return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView contentContainerStyle={styles.scrollContent}><Text style={styles.eyebrow}>MEMORY DETAILS</Text><Text style={styles.title}>{selected.title} <Text style={styles.titleDate}>· {memoryDate(selected.created_at)}</Text></Text><Text style={styles.meta}>{selected.category || "Uncategorised"}</Text><TagChips tags={selected.tags} /><View style={styles.imageButtonRow}><View style={styles.actionItem}><Button title="Edit" onPress={openEdit} disabled={visionBusy} /></View><View style={styles.actionItem}><Button title="Back to List" onPress={() => setScreen("list")} disabled={visionBusy} /></View></View><View style={styles.contentCard}><Text style={styles.sectionTitle}>Memory Content</Text><Text style={styles.content}>{selected.confirmed_content}</Text></View><View style={styles.imageCard}><View style={styles.imageButtonRow}><View style={styles.actionItem}><Button title={imageLoading ? "Processing…" : "Add or Replace Image"} onPress={chooseImage} disabled={imageLoading || visionBusy} nowrap /></View>{selected.source_image_path && <View style={styles.actionItem}><Button title={showSavedImage ? "Hide Image" : "Preview Image"} onPress={() => setShowSavedImage(!showSavedImage)} nowrap /></View>}</View>{selected.source_image_filename && <Text style={styles.supportingText}>Attached: {selected.source_image_filename}</Text>}{selected.source_image_path && <Button title="Reanalyse with OpenAI" onPress={confirmReanalyzeImage} disabled={captureBusy || imageLoading} />}{showSavedImage && selected.source_image_path && <Image style={styles.sourceImage} source={{ uri: `${API_URL}/memories/${selected.id}/image/file` }} resizeMode="contain" />}
 {visionReview && <View style={styles.aiCard}><Text style={styles.aiTitle}>Analysis Draft · Review Required</Text>
   <Text style={styles.aiLabel}>Title</Text><TextInput style={styles.input} value={captureTitle} onChangeText={(title) => { setCaptureTitle(title); titleTouched.current = true; }} maxLength={200} />
   <VisionFields key={visionReview.draft_id} value={visionReview.draft} onChange={reviewVisionFields} disabled={captureBusy} />
@@ -484,7 +519,7 @@ function AppContent() {
 {visionMessage && <Text style={styles.warning}>{visionMessage}</Text>}
 {imageError && <Text style={styles.error}>{imageError}</Text>}
 {selected.confirmed_vision && <View><Text style={styles.aiTitle}>Confirmed Memory Fields</Text><VisionFields value={JSON.parse(selected.confirmed_vision)} disabled /></View>}
-</View><View style={styles.reminderCard}><Text style={styles.aiTitle}>One-time Reminder</Text>
+</View><View style={styles.reminderCard}><Text style={styles.aiTitle}>Reminder</Text>
 <Button title="Choose Date" onPress={() => { setPickerValue(reminderDateTime(reminderDay, reminderTime) || (reminderDay ? new Date(`${reminderDay}T12:00:00`) : new Date(Date.now() + 86400000))); setPickerMode("date"); }} />
 <Button title="Choose Time" onPress={() => { setPickerValue(reminderDateTime(reminderDay, reminderTime) || (reminderDay ? new Date(`${reminderDay}T12:00:00`) : new Date())); setPickerMode("time"); }} />
 {pickerMode && <><DateTimePicker key={pickerMode} value={pickerValue} mode={pickerMode} display="spinner" onChange={(event, value) => { if (event.type !== "dismissed" && value) setPickerValue(value); }} onDismiss={() => setPickerMode(null)} /><Button title="Done" onPress={() => { const day = pickerMode === "date" ? localDay(pickerValue) : reminderDay; const time = pickerMode === "time" ? localTime(pickerValue) : reminderTime; setReminderDay(day); setReminderTime(time); reminderDrafts.current[selected.id] = { day, time }; setReminderTouched(true); setPickerMode(null); }} /></>}
@@ -499,6 +534,7 @@ function AppContent() {
   const toggleTag = (tag: string) => setSelectedTags((tags) => tags.includes(tag) ? tags.filter((item) => item !== tag) : [...tags, tag]);
   const clearFilters = async () => { setSelectedTags([]); await clearSearch(); };
   return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><Text style={styles.eyebrow}>LOCAL LIBRARY</Text><Text style={styles.title}>My Memories</Text><View style={styles.actionPanel}><View style={styles.topActionRow}><View style={styles.actionItem}><Button title="+ New Memory" onPress={openCreate} variant="primary" /></View><View style={styles.actionItem}><Button title="+ Take Photo" onPress={() => chooseNewImage("camera")} variant="primary" disabled={captureBusy} /></View><View style={styles.actionItem}><Button title="+ Choose Photo" onPress={() => chooseNewImage("library")} variant="primary" disabled={captureBusy} /></View></View></View><View style={styles.searchPanel}><View style={styles.searchRow}><TextInput style={styles.searchInput} placeholder="Search title, content, or tags" placeholderTextColor="#78828c" value={searchKeyword} onChangeText={(value) => { setSearchKeyword(value); if (!value.trim()) setSearchResults(null); setSearchError(null); }} onSubmitEditing={search} returnKeyType="search" /><Button title="Search" onPress={search} /></View>{searchResults !== null && <Button title="Clear Search" onPress={clearSearch} />}
+<Button title="Ask My Memories" onPress={() => setScreen("ask")} />
 <View style={styles.tagFilter}><Button title={showTagChoices ? "Hide Tags" : `Filter by Tags${selectedTags.length ? ` (${selectedTags.length})` : ""}`} onPress={() => setShowTagChoices(!showTagChoices)} />
 {selectedTags.length > 0 && <View style={styles.tagRow}>{selectedTags.map((tag) => <TouchableOpacity key={tag} style={styles.selectedTag} onPress={() => toggleTag(tag)}><Text style={styles.selectedTagText} numberOfLines={1}>✕ {tag}</Text></TouchableOpacity>)}<Button title="Clear All" onPress={() => setSelectedTags([])} /></View>}
 {showTagChoices && (tagChoices.length ? <View style={styles.tagRow}>{tagChoices.map((tag) => <TouchableOpacity key={tag} style={selectedTags.includes(tag) ? styles.selectedTag : styles.tagChoice} onPress={() => toggleTag(tag)}><Text style={selectedTags.includes(tag) ? styles.selectedTagText : styles.tagText} numberOfLines={1}>{selectedTags.includes(tag) ? "✓ " : ""}{tag}</Text></TouchableOpacity>)}</View> : <Text style={styles.status}>No tags yet. Add tags to a Memory to filter by them.</Text>)}</View></View>

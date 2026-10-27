@@ -16,6 +16,7 @@ from ..database import get_db
 from ..services import vision
 from ..services.categories import normalize_category
 from ..services.tags import normalize_tags
+from ..services.embedding import refresh_embedding_safely
 from .images import managed_image, owned
 from .memories import to_read
 
@@ -171,6 +172,8 @@ def finalize_image(memory_id: int, payload: ImageFinalizeRequest, db: Session = 
     memory.confirmation_status = "accepted" if payload.draft else "confirmed"
     memory.vision_draft = None
     db.commit(); db.refresh(memory)
+    refresh_embedding_safely(memory)
+    db.refresh(memory)
     return to_read(memory)
 
 
@@ -189,6 +192,8 @@ def update_confirmed_image(memory_id: int, payload: ConfirmedImageUpdate, db: Se
         memory.category = cleaned.category
         memory.tags = json.dumps(cleaned.tags)
     db.commit(); db.refresh(memory)
+    refresh_embedding_safely(memory)
+    db.refresh(memory)
     return to_read(memory)
 
 
@@ -205,6 +210,8 @@ def save_text(memory_id: int, payload: ManualImageTextRequest, db: Session = Dep
     memory.confirmation_status = "confirmed"
     memory.vision_draft = None
     db.commit(); db.refresh(memory)
+    refresh_embedding_safely(memory)
+    db.refresh(memory)
     return to_read(memory)
 
 
@@ -236,6 +243,8 @@ def accept(memory_id: int, payload: VisionAccept, db: Session = Depends(get_db))
     memory.confirmation_status = "accepted"
     memory.vision_draft = None
     db.commit(); db.refresh(memory)
+    refresh_embedding_safely(memory)
+    db.refresh(memory)
     return to_read(memory)
 
 

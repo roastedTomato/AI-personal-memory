@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from .categories import CANONICAL_CATEGORIES, normalize_category
 from .tags import normalize_tags
 
-DEFAULT_MODEL = "gpt-4.1-nano-2025-04-14"
+DEFAULT_MODEL = "gpt-5.6-luna"
 MAX_BYTES = 5 * 1024 * 1024
 FIELDS = ["suggested_title", "summary", "category", "tags", "amount", "currency", "date", "time", "due_date", "institution", "location_name", "location_address", "location_purpose"]
 
@@ -135,6 +135,8 @@ def parse_response(response: dict, output_model=VisionDraft) -> dict:
 
 
 def _request(payload: dict, output_model) -> dict:
+    if payload.get("model") == "gpt-5.6-luna":
+        payload = {**payload, "reasoning": {"effort": "none"}}
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not key: raise VisionError("key_not_configured")
     request = urllib.request.Request("https://api.openai.com/v1/responses", data=json.dumps(payload).encode(),
@@ -153,12 +155,18 @@ def _request(payload: dict, output_model) -> dict:
         return result
     except urllib.error.HTTPError as exc:
         try: code = json.loads(exc.read(8192)).get("error", {}).get("code")
-        except (ValueError, TypeError): code = None
+        except (ValueError, TypeError, AttributeError): code = None
         if code == "insufficient_quota": error = "insufficient_quota"
         elif exc.code == 429: error = "rate_limited"
         elif exc.code in (401, 403): error = "authentication_failed"
         else: error = "provider_error"
-        raise VisionError(error) from None
+        safe_codes = {"invalid_api_key", "insufficient_quota", "rate_limit_exceeded",
+                      "model_not_found", "invalid_json_schema", "invalid_request_error",
+                      "unsupported_parameter", "unsupported_value", "invalid_value",
+                      "context_length_exceeded", "permission_denied", "server_error"}
+        diagnostics = {"http_status": exc.code,
+                       "provider_code": code if isinstance(code, str) and code in safe_codes else "unknown"}
+        raise VisionError(error, diagnostics=diagnostics) from None
     except (TimeoutError, socket.timeout):
         raise VisionError("timeout") from None
     except urllib.error.URLError as exc:

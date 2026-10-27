@@ -11,6 +11,7 @@ from ..models import Memory
 from ..schemas import MemoryCreate, MemoryRead, MemoryUpdate
 from ..services.categories import normalize_category
 from ..services.tags import normalize_tags
+from ..services.embedding import refresh_embedding_safely
 
 router = APIRouter(prefix="/memories", tags=["memories"])
 
@@ -35,6 +36,8 @@ def create_memory(payload: MemoryCreate, db: Session = Depends(get_db)) -> Memor
     memory.tags = json.dumps(normalize_tags(payload.tags, payload.original_text + " " + payload.confirmed_content))
     db.add(memory)
     db.commit()
+    db.refresh(memory)
+    refresh_embedding_safely(memory)
     db.refresh(memory)
     return to_read(memory)
 
@@ -65,6 +68,8 @@ def update_memory(memory_id: int, payload: MemoryUpdate, db: Session = Depends(g
     for key, value in values.items():
         setattr(memory, key, value)
     db.commit()
+    db.refresh(memory)
+    refresh_embedding_safely(memory)
     db.refresh(memory)
     return to_read(memory)
 

@@ -93,7 +93,7 @@ To enable AI recognition, set the key only in the backend environment:
 
 ```sh
 export OPENAI_API_KEY='your-key'
-export OPENAI_VISION_MODEL='gpt-4.1-nano-2025-04-14'
+export OPENAI_VISION_MODEL='gpt-5.6-luna'
 ```
 
 Never put `OPENAI_API_KEY` in `EXPO_PUBLIC_*`, mobile configuration, source files, or logs.
@@ -123,6 +123,31 @@ EXPO_PUBLIC_API_URL=http://<computer-lan-address>:8000 npm start
 You can also use `npm run ios`, `npm run android`, or `npm run web`.
 
 ## Tests and checks
+
+### Memory questions
+
+Open **Ask My Memories** on the list screen. Each request asks permission to send
+the question and up to five matching confirmed records to OpenAI. Sources open
+their current Memory details. Existing keyword search remains available.
+
+`POST /memories/query` accepts `question`, `consent`, `today` (the device's local
+date), optional `upcoming_only`, `event_from`, `event_to`, and `category`.
+Upcoming/future and 即将/未来/接下来 also enable the upcoming filter. Other natural
+language date expressions are not automatically interpreted. Dates come from
+`event_date`, or the valid, non-uncertain date in `confirmed_vision`; reminder dates
+are not event dates. Missing dates are excluded when filtering by event date.
+
+Retrieval restricts records to `LOCAL_USER_ID`, skips drafts and stale embeddings,
+applies date/category eligibility before vector ranking, and returns up to five
+matches with cosine similarity >= 0.25 (an initial, uncalibrated threshold).
+Only matching confirmed content is sent for answering. Failed generation returns
+the retrieved sources. Embedding failure returns an error with keyword search
+still available. `OPENAI_RAG_MODEL` controls the answering model.
+
+This remains a local single-user implementation: `LOCAL_USER_ID` is not authenticated
+identity. Do not expose it as a multi-user service before adding real authentication.
+Date eligibility currently scans this user's records in Python to handle legacy
+JSON dates; normalize dates and move that predicate into SQL before scaling up.
 
 ```sh
 .venv/bin/pytest -q

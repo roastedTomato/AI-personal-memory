@@ -58,6 +58,32 @@ def test_memory_crud_flow_and_ownership_boundary():
     assert client.get(f"/memories/{memory_id}").status_code == 404
 
 
+def test_structured_fields_are_optional_and_round_trip():
+    created = client.post("/memories", json=payload()).json()
+    assert created["event_date"] is None and created["embedding"] is None
+    updated = client.patch(f"/memories/{created['id']}", json={
+        "event_date": "2030-12-01", "due_date": "2030-12-15",
+        "location": "Auckland Domain", "amount": "12.50", "currency": "NZD",
+    })
+    assert updated.status_code == 200
+    value = updated.json()
+    assert value["event_date"] == "2030-12-01"
+    assert value["due_date"] == "2030-12-15"
+    assert value["location"] == "Auckland Domain"
+    assert value["amount"] == "12.50"
+    assert value["currency"] == "NZD"
+
+
+def test_embedding_text_excludes_unconfirmed_and_internal_fields():
+    from app.models import Memory as MemoryModel
+    from app.services.embedding import build_embedding_text
+    memory = MemoryModel(title="Run", confirmed_content="Community fun run", tags='["running"]',
+                         confirmed_image_text="Saturday event", category="event",
+                         vision_draft="secret draft", reminder_notification_id="private-id")
+    text = build_embedding_text(memory)
+    assert "Community fun run" in text and "Saturday event" in text
+    assert "secret draft" not in text and "private-id" not in text
+
 def test_memory_validation():
     response = client.post("/memories", json={"title": "missing required fields"})
     assert response.status_code == 422
