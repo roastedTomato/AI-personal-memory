@@ -6,6 +6,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as ImagePicker from "expo-image-picker";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
+import Markdown from "react-native-markdown-display";
 import { visionRequestError } from "./apiErrors";
 import { availableTags, displayTags, filterByTags } from "./tagFilter";
 import { API_URL, request } from "./api/client";
@@ -86,6 +87,10 @@ function Button({ title, onPress, disabled = false, color, variant = "secondary"
   const destructive = color === "#b00020";
   const singleLine = nowrap || title.startsWith("+");
   return <TouchableOpacity accessibilityRole="button" accessibilityState={{ disabled }} activeOpacity={0.7} disabled={disabled} onPress={onPress} style={[styles.button, singleLine && styles.singleLineButton, variant === "primary" && styles.primaryButton, compact && styles.compactButton, destructive && styles.destructiveButton, disabled && styles.disabledButton]}><Text style={[styles.buttonText, variant === "primary" && styles.primaryButtonText, destructive && styles.destructiveButtonText, disabled && styles.disabledButtonText]} numberOfLines={singleLine ? 1 : 2}>{title}</Text></TouchableOpacity>;
+}
+
+function MarkdownText({ value }: { value: string }) {
+  return <Markdown style={markdownStyles}>{value}</Markdown>;
 }
 
 function AppContent() {
@@ -468,7 +473,7 @@ function AppContent() {
     <Button title={upcomingOnly ? "✓ Upcoming events only" : "Upcoming events only"} disabled={questionBusy} onPress={() => { setUpcomingOnly(!upcomingOnly); setAnswer(null); }} />
     <Button title={questionBusy ? "Finding an answer…" : "Ask"} onPress={askMemories} disabled={questionBusy || !question.trim()} variant="primary" />
     {questionError && <Text style={styles.error}>{questionError}</Text>}
-    {answer && <View style={styles.contentCard}><Text selectable style={styles.content}>{answer.answer}</Text>
+    {answer && <View style={styles.contentCard}><MarkdownText value={answer.answer} />
       {answer.sources.map((source) => <Button key={source.memory_id} title={`[Memory ${source.memory_id}] ${source.title}${source.event_date ? ` · ${source.event_date}` : ""}`} onPress={async () => {
         try { openDetail(await request(`/memories/${source.memory_id}`)); }
         catch { setQuestionError("This source is no longer available."); }
@@ -509,7 +514,7 @@ function AppContent() {
     <Button title="Save Changes" onPress={save} /><Button title="Cancel" onPress={() => setScreen("detail")} />
   </ScrollView></SafeAreaView>;
   if (screen === "form") return <Form draft={draft} setDraft={setDraft} onSave={save} onCancel={() => setScreen(selected ? "detail" : "list")} editing={!!selected} />;
-  if (screen === "detail" && selected) return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView contentContainerStyle={styles.scrollContent}><Text style={styles.eyebrow}>MEMORY DETAILS</Text><Text style={styles.title}>{selected.title} <Text style={styles.titleDate}>· {memoryDate(selected.created_at)}</Text></Text><Text style={styles.meta}>{selected.category || "Uncategorised"}</Text><TagChips tags={selected.tags} /><View style={styles.imageButtonRow}><View style={styles.actionItem}><Button title="Edit" onPress={openEdit} disabled={visionBusy} /></View><View style={styles.actionItem}><Button title="Back to List" onPress={() => setScreen("list")} disabled={visionBusy} /></View></View><View style={styles.contentCard}><Text style={styles.sectionTitle}>Memory Content</Text><Text style={styles.content}>{selected.confirmed_content}</Text></View><View style={styles.imageCard}><View style={styles.imageButtonRow}><View style={styles.actionItem}><Button title={imageLoading ? "Processing…" : "Add or Replace Image"} onPress={chooseImage} disabled={imageLoading || visionBusy} nowrap /></View>{selected.source_image_path && <View style={styles.actionItem}><Button title={showSavedImage ? "Hide Image" : "Preview Image"} onPress={() => setShowSavedImage(!showSavedImage)} nowrap /></View>}</View>{selected.source_image_filename && <Text style={styles.supportingText}>Attached: {selected.source_image_filename}</Text>}{selected.source_image_path && <Button title="Reanalyse with OpenAI" onPress={confirmReanalyzeImage} disabled={captureBusy || imageLoading} />}{showSavedImage && selected.source_image_path && <Image style={styles.sourceImage} source={{ uri: `${API_URL}/memories/${selected.id}/image/file` }} resizeMode="contain" />}
+  if (screen === "detail" && selected) return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView contentContainerStyle={styles.scrollContent}><Text style={styles.eyebrow}>MEMORY DETAILS</Text><Text style={styles.title}>{selected.title} <Text style={styles.titleDate}>· {memoryDate(selected.created_at)}</Text></Text><Text style={styles.meta}>{selected.category || "Uncategorised"}</Text><TagChips tags={selected.tags} /><View style={styles.imageButtonRow}><View style={styles.actionItem}><Button title="Edit" onPress={openEdit} disabled={visionBusy} /></View><View style={styles.actionItem}><Button title="Back to List" onPress={() => setScreen("list")} disabled={visionBusy} /></View></View><View style={styles.contentCard}><Text style={styles.sectionTitle}>Memory Content</Text><MarkdownText value={selected.confirmed_content} /></View><View style={styles.imageCard}><View style={styles.imageButtonRow}><View style={styles.actionItem}><Button title={imageLoading ? "Processing…" : "Add or Replace Image"} onPress={chooseImage} disabled={imageLoading || visionBusy} nowrap /></View>{selected.source_image_path && <View style={styles.actionItem}><Button title={showSavedImage ? "Hide Image" : "Preview Image"} onPress={() => setShowSavedImage(!showSavedImage)} nowrap /></View>}</View>{selected.source_image_filename && <Text style={styles.supportingText}>Attached: {selected.source_image_filename}</Text>}{selected.source_image_path && <Button title="Reanalyse with OpenAI" onPress={confirmReanalyzeImage} disabled={captureBusy || imageLoading} />}{showSavedImage && selected.source_image_path && <Image style={styles.sourceImage} source={{ uri: `${API_URL}/memories/${selected.id}/image/file` }} resizeMode="contain" />}
 {visionReview && <View style={styles.aiCard}><Text style={styles.aiTitle}>Analysis Draft · Review Required</Text>
   <Text style={styles.aiLabel}>Title</Text><TextInput style={styles.input} value={captureTitle} onChangeText={(title) => { setCaptureTitle(title); titleTouched.current = true; }} maxLength={200} />
   <VisionFields key={visionReview.draft_id} value={visionReview.draft} onChange={reviewVisionFields} disabled={captureBusy} />
@@ -528,7 +533,7 @@ function AppContent() {
 {reminderDay && !reminderTime && <Text style={styles.warning}>Choose a specific time before setting the reminder.</Text>}
 <Button title={reminderBusy ? "Saving Reminder…" : reminderMessage === "Reminder updated" ? "Reminder updated" : selected.reminder_at ? "Update Reminder" : "Set Reminder"} onPress={setReminder} disabled={reminderBusy} />
 {selected.reminder_at && <Button title="Cancel Reminder" color="#b00020" onPress={cancelReminder} />}
-{reminderError && <Text style={styles.error}>{reminderError}</Text>}</View>{!selected.source_image_path && <><Button title={aiLoading ? "Generating…" : "Generate AI Draft"} onPress={generateAI} disabled={aiLoading} />{aiDraft?.draft && <View style={styles.aiCard}><Text style={styles.aiTitle}>AI Draft · Confirmation Required</Text><Text style={styles.aiLabel}>Summary</Text>{reviewEditing ? <TextInput style={[styles.input, styles.multiline]} multiline value={aiDraft.draft.summary} onChangeText={(summary) => setAiDraft({ ...aiDraft, draft: { ...aiDraft.draft!, summary } })} /> : <Text style={styles.content}>{aiDraft.draft.summary}</Text>}<Text style={styles.aiLabel}>Category: {aiDraft.draft.category.value} · Confidence {Math.round(aiDraft.draft.category.confidence * 100)}% · {aiDraft.draft.category.uncertain ? "uncertain" : "likely"}</Text><Text style={styles.aiLabel}>Tags: {aiDraft.draft.tags.map((tag) => tag.value).join(", ")}</Text>{aiDraft.warnings.map((warning) => <Text key={warning} style={styles.warning}>Note: {warning}</Text>)}<Button title="Accept AI Draft" onPress={acceptAI} /><Button title="Edit Draft Content" onPress={() => setReviewEditing(true)} /><Button title="Reject AI Draft" color="#b00020" onPress={rejectAI} /></View>}</>}<Button title="Delete Memory" color="#b00020" onPress={remove} disabled={visionBusy} /></ScrollView></SafeAreaView>;
+{reminderError && <Text style={styles.error}>{reminderError}</Text>}</View>{!selected.source_image_path && <><Button title={aiLoading ? "Generating…" : "Generate AI Draft"} onPress={generateAI} disabled={aiLoading} />{aiDraft?.draft && <View style={styles.aiCard}><Text style={styles.aiTitle}>AI Draft · Confirmation Required</Text><Text style={styles.aiLabel}>Summary</Text>{reviewEditing ? <TextInput style={[styles.input, styles.multiline]} multiline value={aiDraft.draft.summary} onChangeText={(summary) => setAiDraft({ ...aiDraft, draft: { ...aiDraft.draft!, summary } })} /> : <MarkdownText value={aiDraft.draft.summary} /> }<Text style={styles.aiLabel}>Category: {aiDraft.draft.category.value} · Confidence {Math.round(aiDraft.draft.category.confidence * 100)}% · {aiDraft.draft.category.uncertain ? "uncertain" : "likely"}</Text><Text style={styles.aiLabel}>Tags: {aiDraft.draft.tags.map((tag) => tag.value).join(", ")}</Text>{aiDraft.warnings.map((warning) => <Text key={warning} style={styles.warning}>Note: {warning}</Text>)}<Button title="Accept AI Draft" onPress={acceptAI} /><Button title="Edit Draft Content" onPress={() => setReviewEditing(true)} /><Button title="Reject AI Draft" color="#b00020" onPress={rejectAI} /></View>}</>}<Button title="Delete Memory" color="#b00020" onPress={remove} disabled={visionBusy} /></ScrollView></SafeAreaView>;
   const tagChoices = availableTags(memories);
   const displayedMemories = filterByTags(searchResults ?? memories, selectedTags);
   const toggleTag = (tag: string) => setSelectedTags((tags) => tags.includes(tag) ? tags.filter((item) => item !== tag) : [...tags, tag]);
@@ -580,6 +585,18 @@ function Form({ draft, setDraft, onSave, onCancel, editing }: { draft: Draft; se
   const formTags = draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean);
   return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView contentContainerStyle={styles.scrollContent}><Text style={styles.eyebrow}>{editing ? "UPDATE MEMORY" : "ADD TO LIBRARY"}</Text><Text style={styles.title}>{editing ? "Edit Memory" : "New Memory"}</Text><View style={styles.formCard}>{field("title", "Title", "Enter a clear, recognisable title")}{field("original_text", "Content", "Record the important details from this document", true)}{field("category", "Category", "For example: bill, receipt, notice")}{field("tags", "Tags", "Separate multiple tags with commas")}<TagChips tags={formTags} /></View><View style={styles.formActions}><Button title="Save" onPress={onSave} /><Button title="Cancel" onPress={onCancel} /></View></ScrollView></SafeAreaView>;
 }
+
+const markdownStyles = {
+  body: { color: "#27322d", fontSize: 16, lineHeight: 25 },
+  heading1: { color: "#27634a", fontSize: 22, fontWeight: "700" as const, marginTop: 8, marginBottom: 8 },
+  heading2: { color: "#27634a", fontSize: 19, fontWeight: "700" as const, marginTop: 8, marginBottom: 6 },
+  strong: { fontWeight: "700" as const, color: "#17201c" },
+  bullet_list: { marginVertical: 4 },
+  ordered_list: { marginVertical: 4 },
+  code_inline: { backgroundColor: "#edf2ef", color: "#315f49" },
+  fence: { backgroundColor: "#edf2ef", borderRadius: 8, padding: 10 },
+  link: { color: "#2f7656" },
+};
 
 const styles = StyleSheet.create({
   container: { flex: 1, paddingHorizontal: 18, paddingTop: 16, backgroundColor: "#f5f7f6" },
