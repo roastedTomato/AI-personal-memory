@@ -94,7 +94,9 @@ function MarkdownText({ value }: { value: string }) {
 }
 
 function AppContent() {
-  const [screen, setScreen] = useState<"list" | "form" | "detail" | "capture" | "ask">("list");
+  const [screen, setScreenState] = useState<"list" | "form" | "detail" | "capture" | "ask">("list");
+  const [detailReturnScreen, setDetailReturnScreen] = useState<"list" | "ask">("list");
+  const setScreen = (next: "list" | "form" | "detail" | "capture" | "ask") => setScreenState(next === "list" && screen === "detail" && detailReturnScreen === "ask" ? "ask" : next);
   const [question, setQuestion] = useState("");
   const [questionBusy, setQuestionBusy] = useState(false);
   const questionLock = useRef(false);
@@ -201,7 +203,7 @@ function AppContent() {
   const reviewVisionFields = (fields: VisionDraft) => { setVisionReview((current) => current ? { ...current, draft: fields } : null); updateReminderFromDraft(fields); };
   const openEdit = () => { if (!selected) return; setDraft({ title: selected.title, original_text: selected.original_text, category: selected.category || "", tags: selected.tags.join(", ") }); setEditContent(selected.confirmed_content); const fields = selected.confirmed_vision ? mapVisionEnvelope({ draft_id: "confirmed", draft: JSON.parse(selected.confirmed_vision) })?.draft ?? emptyVisionDraft() : { ...emptyVisionDraft(), summary: selected.confirmed_content || null, category: selected.category || null, tags: selected.tags }; setEditVision(fields); if (!selected.reminder_at && !reminderTouched && !reminderDrafts.current[selected.id]) { const suggestion = reminderSuggestion(fields); if (suggestion) { setReminderDay(suggestion.day); setReminderTime(suggestion.time); } } setScreen("form"); };
   const save = async () => { if (selected?.source_image_path) { if (!draft.title.trim()) return Alert.alert("Enter a title"); try { const value = await request(`/memories/${selected.id}/image/confirmed`, { method: "PATCH", body: JSON.stringify({ title: draft.title.trim(), confirmed_content: editVision?.summary ?? editContent, draft: editVision }) }); setSelected(value); await load(); setScreen("detail"); } catch (e) { Alert.alert("Save failed", visionRequestError(e)); } return; } if (!draft.title.trim() || !draft.original_text.trim()) return Alert.alert("Enter a title and content"); const payload = { title: draft.title.trim(), original_text: draft.original_text.trim(), confirmed_content: selected && draft.original_text.trim() === selected.original_text ? selected.confirmed_content : draft.original_text.trim(), category: draft.category.trim() || null, tags: draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean) }; try { const value = selected ? await request(`/memories/${selected.id}`, { method: "PATCH", body: JSON.stringify(payload) }) : await request("/memories", { method: "POST", body: JSON.stringify(payload) }); setSelected(value); await load(); setScreen("detail"); } catch (e) { Alert.alert("Save failed", String(e)); } };
-  const remove = () => { if (!selected) return; Alert.alert("Delete Memory", "Are you sure you want to delete this Memory?", [{ text: "Cancel" }, { text: "Delete", style: "destructive", onPress: async () => { try { await request(`/memories/${selected.id}`, { method: "DELETE" }); setSelected(null); await load(); setScreen("list"); } catch (e) { Alert.alert("Delete failed", String(e)); } } }]); };
+  const remove = () => { if (!selected) return; Alert.alert("Delete Memory", "Are you sure you want to delete this Memory?", [{ text: "Cancel" }, { text: "Delete", style: "destructive", onPress: async () => { try { await request(`/memories/${selected.id}`, { method: "DELETE" }); setSelected(null); setDetailReturnScreen("list"); await load(); setScreen("list"); } catch (e) { Alert.alert("Delete failed", String(e)); } } }]); };
   const chooseImage = async () => {
     if (!selected) return;
     setImageError(null);
@@ -474,7 +476,7 @@ function AppContent() {
     {questionError && <Text style={styles.error}>{questionError}</Text>}
     {answer && <View style={styles.contentCard}><MarkdownText value={answer.answer} />
       {answer.sources.map((source) => <Button key={source.memory_id} title={`[Memory ${source.memory_id}] ${source.title}${source.event_date ? ` · ${source.event_date}` : ""}`} onPress={async () => {
-        try { openDetail(await request(`/memories/${source.memory_id}`)); }
+        try { setDetailReturnScreen("ask"); openDetail(await request(`/memories/${source.memory_id}`)); }
         catch { setQuestionError("This source is no longer available."); }
       }} />)}
     </View>}
