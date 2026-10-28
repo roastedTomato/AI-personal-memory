@@ -65,6 +65,27 @@ def event_day(memory) -> date | None:
         return None
 
 
+def confirmed_locations(memory) -> list[str]:
+    """Only recorded location fields, never city mentions in general content."""
+    values = [memory.location] if isinstance(memory.location, str) and memory.location.strip() else []
+    try:
+        fields = json.loads(memory.confirmed_vision or '{}')
+        uncertain = fields.get('uncertain_fields', [])
+        if not isinstance(uncertain, list) or 'location' in uncertain:
+            return values
+        for key in ('location_name', 'location_address'):
+            value = fields.get(key)
+            if key not in uncertain and isinstance(value, str) and value.strip():
+                values.append(value.strip())
+    except (ValueError, TypeError, AttributeError):
+        pass  # Malformed legacy analysis is not usable location evidence.
+    return list(dict.fromkeys(values))
+
+
+def location_text(memory) -> str | None:
+    return '; '.join(confirmed_locations(memory)) or None
+
+
 def structured_search(filters: list[Filter], sorts: list[Sort], db: 'Session | None' = None) -> 'Select':
     """AND structured predicates; sort keys have input priority, NULLs always last.
 
@@ -75,6 +96,7 @@ def structured_search(filters: list[Filter], sorts: list[Sort], db: 'Session | N
 
     statement = _owned(select(Memory))
     event_column = Memory.event_date
+    location_column = Memory.location
     if db is not None and any(op.field == 'event_date' for op in [*filters, *sorts]):
         # Parse JSON in Python to safely reject invalid/uncertain dates. The CASE
         # binds valid dates by ID so SQL filtering AND chronological sorting use
@@ -84,9 +106,19 @@ def structured_search(filters: list[Filter], sorts: list[Sort], db: 'Session | N
         legacy = {row.id: day for row in rows if (day := event_day(row)) is not None}
         if legacy:
             event_column = case(legacy, value=Memory.id, else_=Memory.event_date)
+    if db is not None and any(op.field == 'location' and op.operator == 'contains' for op in filters):
+        # Read only approved location fields. A CASE of bound strings reuses the
+        # normal escaped ILIKE predicate without casting arbitrary legacy JSON.
+        rows = db.execute(_owned(select(Memory.id, Memory.location, Memory.confirmed_vision)).where(
+            Memory.confirmed_vision.is_not(None))).all()
+        locations = {row.id: value for row in rows if (value := location_text(row)) is not None}
+        if locations:
+            location_column = case(locations, value=Memory.id, else_=Memory.location)
     for raw in filters:
         operation = Filter.model_validate(raw.model_dump())
         column = event_column if operation.field == 'event_date' else _column(operation.field)
+        if operation.field == 'location' and operation.operator == 'contains':
+            column = location_column
         if operation.operator == 'is_null':
             predicate = column.is_(None)
         elif operation.operator == 'is_not_null':

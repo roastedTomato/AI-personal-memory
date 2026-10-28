@@ -122,7 +122,9 @@ def execute_query_plan(plan: QueryPlan | dict, db: Session) -> QueryResult:
                     source_image_url=f'/memories/{memory.id}/image/file' if memory.source_image_path else None,
                     confirmed_content=embedding.build_embedding_text(memory),
                     event_date=retrieval_tools.event_day(memory), due_date=memory.due_date,
-                    amount=memory.amount, currency=memory.currency, location=memory.location,
+                    amount=memory.amount, currency=memory.currency,
+                    location=(retrieval_tools.location_text(memory)
+                              if any(op.field == 'location' for op in filters) else memory.location),
                     reminder_at=memory.reminder_at, relevance=float(row[1]) if semantics else None))
             return QueryResult(status='completed' if memories else 'no_matches', memories=memories,
                                retrieval_method=methods,

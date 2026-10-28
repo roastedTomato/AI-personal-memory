@@ -26,6 +26,22 @@ do not silently replace a future tool with semantic matching. Do not impose a de
 Use the supplied device-local today for relative dates: upcoming means event_date >= today;
 last year means the previous calendar year, inclusive Jan 1 through Dec 31.
 Next event: future event_date filter, event_date asc nulls last, limit 1.
+Locations explicitly named by the user use filter field=location, operator=contains,
+value=the stated place. Matching is case-insensitive over recorded location fields,
+including reviewed location names/addresses. A city mentioned in general content
+is not location evidence. Do not infer a city from a venue or institution name.
+Combine location and date filters before sorting and limiting. Do not add semantic
+or keyword operations for the city or generic event/activity wording when these
+structured filters are sufficient. Do not ask for the user's location for a named city.
+"What is the next upcoming event in Hamilton?": location contains Hamilton,
+event_date >= today, event_date asc nulls last, limit 1; no hard category filter.
+"Are there any events in Auckland next month?": location contains Auckland,
+event_date >= first day of next calendar month, event_date < first day of the
+following month, event_date asc nulls last. Resolve year rollover using today.
+"Show me all events in Wellington.": location contains Wellington; no date filter
+or default limit. "What activities have I saved in Hamilton?": location contains
+Hamilton; do not assume upcoming-only. Extra named topics (e.g. jazz) may still
+require semantic matching. Location text filtering never means distance or radius.
 Do NOT impose category=event for general event questions: event notices can be saved
 under notice, appointment, other or no category. Do not add semantic/keyword matching
 to a general chronological query with no named subject. Dates determine chronology.
@@ -119,6 +135,19 @@ def normalize_plan(plan: QueryPlan, question: str) -> QueryPlan:
         generic_question = set(re.findall(r'\w+', question.casefold())) <= generic
         operations = [op for op in operations if not (isinstance(op, (SemanticMatch, KeywordMatch))
                       and (generic_question or set(re.findall(r'\w+', op.query.casefold())) <= generic))]
+    places = [op.value for op in operations if isinstance(op, Filter)
+              and op.field == 'location' and op.operator == 'contains']
+    if places and not explicit_type:
+        operations = [op for op in operations if not (isinstance(op, Filter)
+                      and op.field == 'category' and op.value == 'event')]
+        place_words = set(re.findall(r'\w+', ' '.join(places).casefold()))
+        generic_location_words = {
+            'what', 'is', 'the', 'my', 'next', 'upcoming', 'future', 'event', 'events',
+            'in', 'at', 'are', 'there', 'any', 'month', 'this', 'year', 'show', 'me',
+            'all', 'activities', 'activity', 'have', 'i', 'saved', 'a', 'an', 'please',
+        }
+        if set(re.findall(r'\w+', question.casefold())) <= generic_location_words | place_words:
+            operations = [op for op in operations if not isinstance(op, (SemanticMatch, KeywordMatch))]
     # Topic labels are not document types: insurance can be a notice or policy.
     if not explicit_type and re.search(r'\b(about|regarding)\b|关于', question, re.IGNORECASE):
         operations = [op for op in operations if not (isinstance(op, Filter) and op.field == 'category')]

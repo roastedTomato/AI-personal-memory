@@ -570,3 +570,81 @@ def test_regression_insurance_spending_returns_unsupported_not_invalid(regressio
     assert response['clarification_questions'] == [] and response['sources'] == []
     assert regression_api.calls == []
     embedding.generate_embedding.assert_not_called()
+
+
+def test_location_hamilton_upcoming_event(store, regression_api):
+    match = store.add('Hamilton event', category='notice', location='Garden Place, HAMILTON',
+                      confirmed_vision=json.dumps({'date': '2026-10-31'}))
+    store.add('Later Hamilton event', location='Hamilton', event_date=date(2026, 11, 5))
+    store.add('Auckland earlier', location='Auckland', event_date=date(2026, 10, 30))
+    store.add('Past Hamilton event', location='Hamilton', event_date=date(2026, 10, 1))
+    store.add('Other owner', user_id='other', location='Hamilton', event_date=date(2026, 10, 30))
+    store.add('Draft', confirmation_status='draft', location='Hamilton', event_date=date(2026, 10, 30))
+    regression_api.configured['plan'] = plan(
+        keyword('Hamilton'), semantic('upcoming event in Hamilton'), filt('category', 'eq', 'event'),
+        filt('location', 'contains', 'Hamilton'), filt('event_date', 'gte', '2026-10-29'),
+        sort('event_date'), limit(1))
+    response = regression_api.ask('What is the next upcoming event in Hamilton?')
+    assert response['status'] == 'completed'
+    assert [source['memory_id'] for source in response['sources']] == [match.id]
+    assert response['sources'][0]['citation'] == f'[Memory {match.id}]'
+    assert regression_api.calls[-1][1]['memories'][0]['location'] == 'Garden Place, HAMILTON'
+    assert response['retrieval_method'] == ['structured_search']
+    embedding.generate_embedding.assert_not_called()
+
+
+def test_location_auckland_next_month_date_boundaries_and_sort(store, regression_api):
+    last = store.add('November end', location='Auckland', event_date=date(2026, 11, 30))
+    first = store.add('November start', location='auckland', event_date=date(2026, 11, 1))
+    store.add('October', location='Auckland', event_date=date(2026, 10, 31))
+    store.add('December', location='Auckland', event_date=date(2026, 12, 1))
+    store.add('Unknown date', location='Auckland')
+    store.add('Wrong location', location='Wellington', event_date=date(2026, 11, 2))
+    regression_api.configured['plan'] = plan(
+        filt('location', 'contains', 'Auckland'), filt('event_date', 'gte', '2026-11-01'),
+        filt('event_date', 'lt', '2026-12-01'), sort('event_date'))
+    response = regression_api.ask('Are there any events in Auckland next month?')
+    context = regression_api.calls[-1][1]['memories']
+    assert response['status'] == 'completed'
+    assert [memory['memory_id'] for memory in context] == [first.id, last.id]
+    assert response['matched_count'] == 2
+    embedding.generate_embedding.assert_not_called()
+
+
+def test_location_wellington_all_and_no_matches(store, regression_api):
+    match = store.add('Undated Wellington activity', location='Wellington')
+    store.add('General content mention', confirmed_content='Someone from Wellington will attend',
+              location='Hamilton')
+    regression_api.configured['plan'] = plan(filt('location', 'contains', 'Wellington'),
+                                            keyword('Wellington'), filt('category', 'eq', 'event'))
+    response = regression_api.ask('Show me all events in Wellington.')
+    assert response['status'] == 'completed' and response['matched_count'] == 1
+    assert response['sources'][0]['memory_id'] == match.id
+    assert not any(op['operation'] == 'limit' for op in response['applied_operations'])
+    regression_api.configured['plan'] = plan(filt('location', 'contains', 'Dunedin'))
+    count_before = len(regression_api.calls)
+    empty = regression_api.ask('Show me all events in Dunedin.')
+    assert empty['status'] == 'no_matches' and empty['sources'] == []
+    assert 'No confirmed Memories match' in empty['answer']
+    assert len(regression_api.calls) == count_before + 1  # Classify only, no answer call.
+    embedding.generate_embedding.assert_not_called()
+
+
+def test_location_confirmed_vision_only_excludes_uncertain_and_content(store, regression_api):
+    match = store.add('Recorded venue', category='notice',
+                      confirmed_vision=json.dumps({'location_name': 'Community Hall',
+                                                   'location_address': '123 Example Street, Hamilton'}))
+    store.add('Content mention only', confirmed_content='A visitor from Hamilton',
+              confirmed_vision=json.dumps({'summary': 'Hamilton', 'location_purpose': 'meet Hamilton visitors'}))
+    store.add('Uncertain city', confirmed_vision=json.dumps({'location_name': 'Hamilton',
+                                                           'uncertain_fields': ['location_name']}))
+    store.add('Draft location', vision_draft=json.dumps({'location_address': 'Hamilton'}))
+    store.add('Malformed JSON', confirmed_vision='{invalid')
+    regression_api.configured['plan'] = plan(filt('location', 'contains', 'hamilton'))
+    response = regression_api.ask('What activities have I saved in Hamilton?')
+    assert response['status'] == 'completed' and response['matched_count'] == 1
+    assert response['sources'][0]['memory_id'] == match.id
+    context = regression_api.calls[-1][1]['memories'][0]
+    assert context['location'] == 'Community Hall; 123 Example Street, Hamilton'
+    assert context['event_date'] is None
+    embedding.generate_embedding.assert_not_called()
