@@ -32,7 +32,7 @@ The current implementation is intentionally local and single-user. Its design pr
 
 ## Screenshots
 
-These screenshots show the current app, including the Memory library, RAG-based AI Q&A, Memory details, and local notifications.
+These screenshots show the current app, including the Memory library, RAG-based AI Q&A, and Memory details.
 
 ### Memory list
 
@@ -49,6 +49,7 @@ These screenshots show the current app, including the Memory library, RAG-based 
 ### Local notification
 
 ![Local reminder notification](docs/screenshots/notification-reminder.jpg)
+
 
 ## Architecture
 
