@@ -13,37 +13,38 @@ The project currently runs locally with a React Native + Expo mobile app, a Fast
 - Review and confirm titles, dates, amounts, locations, purposes, and other fields
 - Search by keywords and filter by tags
 - Create one-time reminders delivered through Expo local notifications
+- Ask natural-language questions about saved Memories with RAG-based AI Q&A
 - Preserve original sources by default; deletion remains user-controlled
 - Continue with manual editing and saving when AI recognition fails
 
-### Planned AI Q&A
+### AI Q&A with RAG
 
-Future versions are planned to include an AI Q&A feature powered by RAG (Retrieval-Augmented Generation). Users will be able to ask natural-language questions about their saved and confirmed Memories, such as “Which event notices did I save last month?” or “Where is the Craftadian handmade market being held?”. The system will first retrieve relevant content from the user’s own Memories, confirmed text, and structured fields, then generate an answer grounded in those sources.
+The app now supports AI Q&A powered by RAG (Retrieval-Augmented Generation). Users can ask natural-language questions about saved and confirmed Memories, such as “Which event notices did I save last month?” or “Where is the Craftadian handmade market being held?”. The system retrieves relevant confirmed content and generates an answer grounded in the matching Memories.
 
-This feature has not been implemented yet. The current image recognition and keyword search features are not RAG. The planned design principles are:
+The current implementation is intentionally local and single-user. Its design principles are:
 
 - Retrieve only content that the current user is authorized to access
 - Prefer user-confirmed fields and text; never treat an AI draft as a fact
 - Show the Memory or original document sources used for an answer
 - Clearly say when there is not enough evidence instead of guessing or filling gaps
 - Keep original images preserved while allowing vector indexes or retrieval data to be deleted independently
-- Evaluate local vector search, managed retrieval services, and PostgreSQL extensions before selecting the final implementation
+- Keep keyword search available when embedding or answer generation fails
 
 ## Screenshots
 
-These screenshots show the main flow from browsing Memories and reviewing extracted content to setting a reminder and receiving a local notification.
+These screenshots show the current app, including the Memory library, RAG-based AI Q&A, Memory details, and local notifications.
 
 ### Memory list
 
 ![Memory list](docs/screenshots/memory-list.jpg)
 
-### Review extracted AI fields
+### AI Q&A
 
-![Review extracted fields](docs/screenshots/review-fields.jpg)
+![AI Q&A](docs/screenshots/ai-qa.jpg)
 
-### Memory details and one-time reminder
+### Memory details and original source
 
-![Memory detail and reminder](docs/screenshots/memory-detail-reminder.jpg)
+![Memory detail](docs/screenshots/memory-detail.jpg)
 
 ### Local notification
 
@@ -184,9 +185,9 @@ Re-analysis is an explicit user action. Opening a saved Memory does not automati
 - M6: Security, privacy, reliability, and release testing
 - M7: Beta testing and release
 - V2: Cross-device synchronization
-- Future: RAG retrieval and AI Q&A over personal documents
+- RAG retrieval and AI Q&A: available in the local single-user app
 
-V1 does not include RAG, AI Q&A, recurring reminders, automatic email/SMS access, website scraping, multi-user sharing, or professional legal, medical, or financial advice. Natural-language Q&A is planned for a later version and does not imply that a cloud model or vector database dependency exists today.
+V1 does not include recurring reminders, automatic email/SMS access, website scraping, multi-user sharing, or professional legal, medical, or financial advice. RAG and AI Q&A are currently available locally; production multi-user authentication and cloud deployment remain future work.
 
 ## License
 
