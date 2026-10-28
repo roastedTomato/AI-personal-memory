@@ -1,6 +1,7 @@
-from pathlib import Path
 import hashlib
-from typing import Literal
+from collections.abc import Callable
+from pathlib import Path
+from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
@@ -12,8 +13,8 @@ from sqlalchemy.orm import Session
 from ..config import LOCAL_USER_ID
 from ..database import get_db
 from ..models import Memory
-from ..schemas import MemoryRead, ImageParseRequest
-from ..services.ocr import recognize
+from ..schemas import ImageParseRequest, MemoryRead
+from ..services import ocr
 from ..services.image_preview import image_preview
 from ..services.mock_ai import generate_draft
 from .memories import to_read
@@ -22,6 +23,8 @@ router = APIRouter(prefix="/memories", tags=["images"])
 UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploads"
 MAX_IMAGE_SIZE = 10 * 1024 * 1024
 ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
+recognize = cast(Callable[[Path], dict[str, Any]], cast(Any, ocr).recognize)
+DatabaseSession = Annotated[Session, Depends(get_db)]
 
 
 def owned(db: Session, memory_id: int) -> Memory:
@@ -32,7 +35,7 @@ def owned(db: Session, memory_id: int) -> Memory:
 
 
 @router.post("/from-image", response_model=MemoryRead, status_code=status.HTTP_201_CREATED)
-def create_from_image(image: UploadFile = File(...), db: Session = Depends(get_db)) -> MemoryRead:
+def create_from_image(image: Annotated[UploadFile, File()], db: DatabaseSession) -> MemoryRead:
     if image.content_type not in ALLOWED_TYPES:
         raise HTTPException(status_code=415, detail="Unsupported image type")
     data = image.file.read(MAX_IMAGE_SIZE + 1)
@@ -66,7 +69,7 @@ def create_from_image(image: UploadFile = File(...), db: Session = Depends(get_d
 
 
 @router.get("/{memory_id}/image/file")
-def image_file(memory_id: int, request: Request, variant: Literal["original", "thumbnail", "preview"] = "original", v: str | None = None, db: Session = Depends(get_db)):
+def image_file(memory_id: int, request: Request, db: DatabaseSession, variant: Literal["original", "thumbnail", "preview"] = "original", v: str | None = None):
     memory = owned(db, memory_id)
     path = managed_image(memory)
     stat = path.stat()
@@ -84,7 +87,7 @@ def image_file(memory_id: int, request: Request, variant: Literal["original", "t
 
 
 @router.post("/{memory_id}/image", response_model=MemoryRead)
-def upload_image(memory_id: int, image: UploadFile = File(...), db: Session = Depends(get_db)) -> MemoryRead:
+def upload_image(memory_id: int, image: Annotated[UploadFile, File()], db: DatabaseSession) -> MemoryRead:
     memory = owned(db, memory_id)
     if image.content_type not in ALLOWED_TYPES:
         raise HTTPException(status_code=415, detail="Unsupported image type")
@@ -114,7 +117,7 @@ def upload_image(memory_id: int, image: UploadFile = File(...), db: Session = De
 
 
 @router.post("/{memory_id}/image/parse")
-def parse_image(memory_id: int, payload: ImageParseRequest | None = None, db: Session = Depends(get_db)) -> dict:
+def parse_image(memory_id: int, db: DatabaseSession, payload: ImageParseRequest | None = None) -> dict[str, Any]:
     memory = owned(db, memory_id)
     if not memory.source_image_path:
         raise HTTPException(status_code=400, detail="No image uploaded")
@@ -131,7 +134,7 @@ def parse_image(memory_id: int, payload: ImageParseRequest | None = None, db: Se
 
 
 @router.delete("/{memory_id}/image", status_code=status.HTTP_204_NO_CONTENT)
-def delete_image(memory_id: int, db: Session = Depends(get_db)) -> None:
+def delete_image(memory_id: int, db: DatabaseSession) -> None:
     memory = owned(db, memory_id)
     if memory.source_image_path:
         path = UPLOAD_DIR / Path(memory.source_image_path).name
@@ -162,7 +165,7 @@ def managed_image(memory: Memory) -> Path:
 
 
 @router.post("/{memory_id}/image/ocr")
-def recognize_image(memory_id: int, db: Session = Depends(get_db)) -> dict:
+def recognize_image(memory_id: int, db: DatabaseSession) -> dict[str, Any]:
     memory = owned(db, memory_id)
     path = managed_image(memory)
     result = recognize(path)

@@ -2,22 +2,27 @@
 import hashlib
 import json
 import logging
+import os
 import re
+from collections.abc import Callable
 from datetime import date
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ..config import LOCAL_USER_ID
 from ..database import get_db
 from ..models import Memory
-from ..services.embedding import MODEL, DIMENSIONS, build_embedding_text, generate_embedding
-from ..services import vision
+from ..services import embedding, vision
 
 router = APIRouter(prefix="/memories", tags=["memory-query"])
 logger = logging.getLogger(__name__)
+MODEL, DIMENSIONS = embedding.MODEL, embedding.DIMENSIONS
+build_embedding_text = cast(Callable[[Memory], str], cast(Any, embedding).build_embedding_text)
+generate_embedding = cast(Callable[[str], str], cast(Any, embedding).generate_embedding)
 
 
 class MemoryQuestion(BaseModel):
@@ -44,7 +49,7 @@ class CitedAnswer(BaseModel):
     memory_ids: list[int] = Field(max_length=5)
 
 
-def event_day(memory):
+def event_day(memory: Memory) -> date | None:
     if memory.event_date:
         return memory.event_date
     try:
@@ -57,10 +62,10 @@ def event_day(memory):
 
 
 @router.post("/query")
-def query_memories(payload: MemoryQuestion, db: Session = Depends(get_db)):
+def query_memories(payload: MemoryQuestion, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
     if not payload.consent:
         raise HTTPException(422, detail="Consent is required to send your question and matching confirmed Memories to OpenAI.")
-    upcoming = payload.upcoming_only or bool(re.search(r"\b(upcoming|future)\b|即将|未来|接下来", payload.question, re.I))
+    upcoming = payload.upcoming_only or bool(re.search(r"\b(upcoming|future)\b|即将|未来|接下来", payload.question, re.IGNORECASE))
     lower = max(payload.event_from or date.min, payload.today if upcoming else date.min)
     upper = payload.event_to or date.max
     # Ownership is applied before retrieval and before any document content leaves the backend.
@@ -68,7 +73,7 @@ def query_memories(payload: MemoryQuestion, db: Session = Depends(get_db)):
     if payload.category:
         statement = statement.where(Memory.category == payload.category)
     candidates = db.scalars(statement).all()
-    eligible = []
+    eligible: list[int] = []
     for memory in candidates:
         if lower != date.min or upper != date.max:
             day = event_day(memory)
@@ -84,7 +89,7 @@ def query_memories(payload: MemoryQuestion, db: Session = Depends(get_db)):
         return {"status": "no_matches", "answer": "No indexed, confirmed Memories match these filters.", "sources": [], "filters": filters}
     try:
         vector = generate_embedding(payload.question.strip())
-    except Exception:
+    except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError):
         raise HTTPException(503, detail="Semantic retrieval is unavailable. You can still use keyword search.") from None
     ranked = db.execute(text("""SELECT id, 1 - (embedding <=> CAST(:vector AS vector(1536))) AS score
         FROM memories WHERE user_id = :owner AND id = ANY(:ids)
@@ -107,12 +112,14 @@ def query_memories(payload: MemoryQuestion, db: Session = Depends(get_db)):
         "Return memory_ids containing only IDs actually cited, or an empty list if no answer is supported. "
         "Respond in the question's language. Do not provide professional advice.")
     try:
-        request = vision._payload({"type": "input_text", "text": json.dumps({
+        # Adapt the existing untyped provider helpers at this module boundary.
+        make_payload = cast(Callable[..., dict[str, Any]], cast(Any, vision)._payload)
+        send_request = cast(Callable[..., dict[str, Any]], cast(Any, vision)._request)
+        request = make_payload({"type": "input_text", "text": json.dumps({
             "today": str(payload.today), "question": payload.question, "memories": context}, ensure_ascii=False)},
             instructions, CitedAnswer, 1800)
-        import os
         request["model"] = os.getenv("OPENAI_RAG_MODEL", vision.DEFAULT_MODEL)
-        result = vision._request(request, CitedAnswer)["draft"]
+        result: dict[str, Any] = send_request(request, CitedAnswer)["draft"]
         allowed = {s["memory_id"] for s in sources}
         cited = {int(value) for value in re.findall(r"\[Memory (\d+)\]", result["answer"])}
         if not set(result["memory_ids"]) <= allowed or not cited <= allowed or cited != set(result["memory_ids"]):
@@ -121,8 +128,8 @@ def query_memories(payload: MemoryQuestion, db: Session = Depends(get_db)):
             return {"status": "insufficient_evidence", "answer": "The matching Memories do not provide enough evidence to answer.", "sources": sources, "filters": filters}
         return {"status": "completed", "answer": result["answer"],
                 "sources": [s for s in sources if s["memory_id"] in cited], "filters": filters}
-    except Exception as exc:
-        code = exc.code if isinstance(exc, vision.VisionError) else "invalid_citations" if isinstance(exc, ValueError) and str(exc) == "invalid_citations" else "internal_error"
+    except (vision.VisionError, ValueError, TypeError, KeyError, IndexError, AttributeError, OSError) as exc:
+        code: str = cast(Any, exc).code if isinstance(exc, vision.VisionError) else "invalid_citations" if isinstance(exc, ValueError) and str(exc) == "invalid_citations" else "internal_error"
         messages = {
             "key_not_configured": "The backend OpenAI API key is not configured.",
             "authentication_failed": "OpenAI rejected the backend API key or permissions.",
@@ -140,7 +147,8 @@ def query_memories(payload: MemoryQuestion, db: Session = Depends(get_db)):
         # Log only a bounded error code, never question, Memory text, or provider output.
         if code not in messages:
             code = "internal_error"
-        diagnostics = exc.diagnostics if isinstance(exc, vision.VisionError) and isinstance(exc.diagnostics, dict) else {}
+        raw_diagnostics: Any = cast(Any, exc).diagnostics if isinstance(exc, vision.VisionError) else None
+        diagnostics: dict[str, Any] = cast(dict[str, Any], raw_diagnostics) if isinstance(raw_diagnostics, dict) else {}
         http_status = diagnostics.get("http_status")
         provider_code = diagnostics.get("provider_code")
         suffix = f" (HTTP {http_status}; {provider_code})" if http_status is not None else ""
