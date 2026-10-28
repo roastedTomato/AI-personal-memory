@@ -2,16 +2,15 @@ from fastapi import FastAPI, Header, HTTPException
 from sqlalchemy import text
 
 from .auth import is_valid_synthetic_token
+from .database import Base, engine
+from .routes.ai import router as ai_router
+from .routes.images import router as images_router
+from .routes.memories import router as memories_router
+from .routes.query import router as query_router
+from .routes.reminders import router as reminders_router
+from .routes.vision import router as vision_router
 from .services.categories import normalize_existing_memory_categories
 from .services.tags import normalize_existing_memory_tags
-from .database import Base, engine
-from .routes.memories import router as memories_router
-from .routes.ai import router as ai_router
-from .routes.reminders import router as reminders_router
-from .routes.images import router as images_router
-
-from .routes.vision import router as vision_router
-from .routes.query import router as query_router
 
 app = FastAPI(title="AI Personal Memory M2", version="0.2.0")
 with engine.begin() as connection:

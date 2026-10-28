@@ -5,10 +5,10 @@ import unicodedata
 
 from sqlalchemy import text
 
-MONTHS = set("january february march april may june july august september october november december jan feb mar apr jun jul aug sep sept oct nov dec".split())
-WEEKDAYS = set("monday tuesday wednesday thursday friday saturday sunday mon tue tues wed thu thur thurs fri sat sun".split())
-FREQUENCIES = set("daily weekly monthly yearly annually biweekly fortnightly everyday everyweek 每天 每周 每月 每年 周期性 每星期".split())
-GENERIC = set("misc miscellaneous general generic other unknown important note notes document documents image photo picture text file files mock-ai 未分类 其他 杂项 重要 笔记 文档 图片 照片 文本 文件".split())
+MONTHS = {"january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december", "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec"}
+WEEKDAYS = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "mon", "tue", "tues", "wed", "thu", "thur", "thurs", "fri", "sat", "sun"}
+FREQUENCIES = {"daily", "weekly", "monthly", "yearly", "annually", "biweekly", "fortnightly", "everyday", "everyweek", "每天", "每周", "每月", "每年", "周期性", "每星期"}
+GENERIC = {"misc", "miscellaneous", "general", "generic", "other", "unknown", "important", "note", "notes", "document", "documents", "image", "photo", "picture", "text", "file", "files", "mock-ai", "未分类", "其他", "杂项", "重要", "笔记", "文档", "图片", "照片", "文本", "文件"}
 ALIASES = {"wonders": "wonder", "wonder opportunity": "wonder", "wonder opportunities": "wonder", "hand made": "handmade", "market day": "market", "market days": "market"}
 
 

@@ -1,4 +1,5 @@
 import json
+from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -10,10 +11,11 @@ from ..database import get_db
 from ..models import Memory
 from ..schemas import MemoryCreate, MemoryRead, MemoryUpdate
 from ..services.categories import normalize_category
-from ..services.tags import normalize_tags
 from ..services.embedding import refresh_embedding_safely
+from ..services.tags import normalize_tags
 
 router = APIRouter(prefix="/memories", tags=["memories"])
+DatabaseSession = Annotated[Session, Depends(get_db)]
 
 
 def to_read(memory: Memory) -> MemoryRead:
@@ -30,7 +32,7 @@ def owned_memory(db: Session, memory_id: int) -> Memory:
 
 
 @router.post("", response_model=MemoryRead, status_code=status.HTTP_201_CREATED)
-def create_memory(payload: MemoryCreate, db: Session = Depends(get_db)) -> MemoryRead:
+def create_memory(payload: MemoryCreate, db: DatabaseSession) -> MemoryRead:
     values = payload.model_dump(exclude={"tags", "category"})
     memory = Memory(user_id=LOCAL_USER_ID, category=normalize_category(payload.category), **values)
     memory.tags = json.dumps(normalize_tags(payload.tags, payload.original_text + " " + payload.confirmed_content))
@@ -43,7 +45,7 @@ def create_memory(payload: MemoryCreate, db: Session = Depends(get_db)) -> Memor
 
 
 @router.get("", response_model=list[MemoryRead])
-def list_memories(q: str | None = Query(default=None, min_length=1, max_length=100), db: Session = Depends(get_db)) -> list[MemoryRead]:
+def list_memories(db: DatabaseSession, q: Annotated[str | None, Query(min_length=1, max_length=100)] = None) -> list[MemoryRead]:
     statement = select(Memory).where(Memory.user_id == LOCAL_USER_ID)
     if q:
         pattern = f"%{q.strip()}%"
@@ -53,12 +55,12 @@ def list_memories(q: str | None = Query(default=None, min_length=1, max_length=1
 
 
 @router.get("/{memory_id}", response_model=MemoryRead)
-def get_memory(memory_id: int, db: Session = Depends(get_db)) -> MemoryRead:
+def get_memory(memory_id: int, db: DatabaseSession) -> MemoryRead:
     return to_read(owned_memory(db, memory_id))
 
 
 @router.patch("/{memory_id}", response_model=MemoryRead)
-def update_memory(memory_id: int, payload: MemoryUpdate, db: Session = Depends(get_db)) -> MemoryRead:
+def update_memory(memory_id: int, payload: MemoryUpdate, db: DatabaseSession) -> MemoryRead:
     memory = owned_memory(db, memory_id)
     values = payload.model_dump(exclude_unset=True)
     if "category" in values:
@@ -75,7 +77,7 @@ def update_memory(memory_id: int, payload: MemoryUpdate, db: Session = Depends(g
 
 
 @router.delete("/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_memory(memory_id: int, db: Session = Depends(get_db)) -> None:
+def delete_memory(memory_id: int, db: DatabaseSession) -> None:
     memory = owned_memory(db, memory_id)
     staged = None
     image_path = None

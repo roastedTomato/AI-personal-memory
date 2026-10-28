@@ -2,7 +2,6 @@
 import base64
 import json
 import os
-import socket
 import urllib.error
 import urllib.request
 from datetime import date
@@ -12,6 +11,7 @@ from time import perf_counter
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
 from .categories import CANONICAL_CATEGORIES, normalize_category
 from .tags import normalize_tags
 
@@ -48,9 +48,8 @@ class VisionDraft(BaseModel):
     @field_validator("date", "due_date")
     @classmethod
     def valid_date(cls, value):
-        if value is not None:
-            if date.fromisoformat(value).isoformat() != value:
-                raise ValueError("Use YYYY-MM-DD")
+        if value is not None and date.fromisoformat(value).isoformat() != value:
+            raise ValueError("Use YYYY-MM-DD")
         return value
 
     @field_validator("amount")
@@ -174,7 +173,7 @@ def _request(payload: dict, output_model) -> dict:
         diagnostics = {"http_status": exc.code,
                        "provider_code": code if isinstance(code, str) and code in safe_codes else "unknown"}
         raise VisionError(error, diagnostics=diagnostics) from None
-    except (TimeoutError, socket.timeout):
+    except TimeoutError:
         raise VisionError("timeout") from None
     except urllib.error.URLError as exc:
         raise VisionError("timeout" if isinstance(exc.reason, TimeoutError) else "network_error") from None

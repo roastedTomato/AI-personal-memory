@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -21,13 +21,13 @@ def test_one_time_reminder_lifecycle():
         db.execute(delete(Memory))
         db.commit()
     memory = client.post("/memories", json={"title": "Reminder test", "original_text": "Call tomorrow", "confirmed_content": "Call tomorrow"}).json()
-    first = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    first = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
     response = client.put(f"/memories/{memory['id']}/reminder", json={"reminder_at": first, "notification_id": "notification-old"})
     assert response.status_code == 201
     assert response.json()["memory_id"] == memory["id"]
     assert response.json()["notification_id"] == "notification-old"
     assert client.get(f"/memories/{memory['id']}/reminder").status_code == 200
-    updated = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+    updated = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
     changed = client.put(f"/memories/{memory['id']}/reminder", json={"reminder_at": updated, "notification_id": "notification-new"})
     assert changed.status_code == 201
     assert changed.json()["notification_id"] == "notification-new"

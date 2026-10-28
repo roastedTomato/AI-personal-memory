@@ -1,7 +1,7 @@
 """Declarative query plans only: no database access or operation execution."""
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Literal, Union
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -51,9 +51,11 @@ class Filter(PlanModel):
                     raise ValueError('Amount must be finite')
             except InvalidOperation:
                 raise ValueError('Invalid amount') from None
-        elif self.field == 'currency':
-            if len(self.value) != 3 or not self.value.isascii() or not self.value.isalpha() or not self.value.isupper():
-                raise ValueError('Use uppercase ISO currency code')
+        elif self.field == 'currency' and (
+            len(self.value) != 3 or not self.value.isascii()
+            or not self.value.isalpha() or not self.value.isupper()
+        ):
+            raise ValueError('Use uppercase ISO currency code')
         return self
 
 
@@ -113,8 +115,8 @@ class ConvertCurrency(PlanModel):
         return self
 
 
-Operation = Union[Filter, Sort, SemanticMatch, KeywordMatch, Limit, Aggregate,
-                  CalculateDistance, ConvertCurrency]
+Operation = (Filter | Sort | SemanticMatch | KeywordMatch | Limit | Aggregate
+             | CalculateDistance | ConvertCurrency)
 
 
 class QueryPlan(PlanModel):

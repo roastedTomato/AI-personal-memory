@@ -4,6 +4,7 @@ import urllib.error
 from pathlib import Path
 
 import pytest
+
 from app.services import vision
 
 DRAFT = {"suggested_title": "测试账单标题", "summary": "测试账单", "category": "bill", "tags": ["test"], "amount": "12.50", "currency": "CNY", "date": "2026-10-21", "time": None, "due_date": None, "institution": "Synthetic Test", "location_name": None, "location_address": None, "location_purpose": None, "uncertain_fields": ["due_date"], "warnings": ["人工核对"]}
@@ -72,11 +73,12 @@ def test_image_limits(tmp_path):
 
 def test_api_confirmation_persistence_protection(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
+
+    from app.database import SessionLocal
     from app.main import app
+    from app.models import Memory
     from app.routes import images
     from app.routes import vision as routes
-    from app.database import SessionLocal
-    from app.models import Memory
     client = TestClient(app)
     monkeypatch.setattr(images, "UPLOAD_DIR", tmp_path)
     calls = []
@@ -123,10 +125,11 @@ def test_api_confirmation_persistence_protection(monkeypatch, tmp_path):
 @pytest.mark.parametrize("confirmation", ["finalize", "vision/accept"])
 def test_api_provider_failure_preserves_content(monkeypatch, tmp_path, confirmation):
     from fastapi.testclient import TestClient
-    from app.main import app
-    from app.routes import images
+
     from app.database import SessionLocal
+    from app.main import app
     from app.models import Memory
+    from app.routes import images
     client = TestClient(app)
     monkeypatch.setattr(images, "UPLOAD_DIR", tmp_path)
     def fail(_): raise vision.VisionError("insufficient_quota")
@@ -198,10 +201,11 @@ def test_analysis_request_contains_only_reviewed_text(monkeypatch):
 
 def test_two_steps_edited_text_location_and_manual_fallback(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
-    from app.main import app
-    from app.routes import images
+
     from app.database import SessionLocal
+    from app.main import app
     from app.models import Memory
+    from app.routes import images
     client = TestClient(app)
     monkeypatch.setattr(images, "UPLOAD_DIR", tmp_path)
     calls = []
@@ -275,10 +279,11 @@ def test_analysis_rejects_empty_and_oversized_input_without_network(value):
 
 def test_direct_image_draft_ocr_analysis_and_single_confirmation(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
-    from app.main import app
-    from app.routes import images
+
     from app.database import SessionLocal
+    from app.main import app
     from app.models import Memory
+    from app.routes import images
     client = TestClient(app)
     monkeypatch.setattr(images, "UPLOAD_DIR", tmp_path)
     monkeypatch.setattr(images, "recognize", lambda _: {"status": "completed", "text": "Synthetic meeting 2030-11-20 14:30", "error": None, "duration_ms": 3})
@@ -317,6 +322,7 @@ def test_direct_image_draft_ocr_analysis_and_single_confirmation(monkeypatch, tm
 
 def test_direct_image_ai_failure_allows_manual_finalization(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
+
     from app.main import app
     from app.routes import images
     client = TestClient(app)
@@ -358,6 +364,7 @@ def test_combined_image_analysis_is_one_request(monkeypatch, tmp_path):
 
 def test_explicit_image_reanalysis_preserves_confirmed_until_accept(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
+
     from app.main import app
     from app.routes import images
     client = TestClient(app)
@@ -387,6 +394,7 @@ def test_explicit_image_reanalysis_preserves_confirmed_until_accept(monkeypatch,
 
 def test_combined_image_failure_keeps_existing_content(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
+
     from app.main import app
     from app.routes import images
     client = TestClient(app)
@@ -405,6 +413,7 @@ def test_combined_image_failure_keeps_existing_content(monkeypatch, tmp_path):
 
 def test_backend_vision_response_matches_mobile_form_contract(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
+
     from app.main import app
     from app.routes import images
     fixture = json.loads((Path(__file__).resolve().parents[1] / "mobile/tests/vision-response.json").read_text())
@@ -421,6 +430,7 @@ def test_backend_vision_response_matches_mobile_form_contract(monkeypatch, tmp_p
 
 def test_edit_confirmed_image_prefills_and_preserves_originals(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
+
     from app.main import app
     from app.routes import images
     monkeypatch.setattr(images, "UPLOAD_DIR", tmp_path)
@@ -458,6 +468,7 @@ def test_edit_confirmed_image_prefills_and_preserves_originals(monkeypatch, tmp_
 
 def test_manual_image_can_gain_structured_fields_on_edit(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
+
     from app.main import app
     from app.routes import images
     monkeypatch.setattr(images, "UPLOAD_DIR", tmp_path)
@@ -475,6 +486,7 @@ def test_manual_image_can_gain_structured_fields_on_edit(monkeypatch, tmp_path):
 
 def test_ai_draft_tags_are_cleaned_before_review_and_confirmation(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
+
     from app.main import app
     from app.routes import images
     monkeypatch.setattr(images, "UPLOAD_DIR", tmp_path)
@@ -491,6 +503,7 @@ def test_ai_draft_tags_are_cleaned_before_review_and_confirmation(monkeypatch, t
 
 def test_ai_title_only_saves_after_confirmation(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
+
     from app.main import app
     from app.routes import images
     monkeypatch.setattr(images, "UPLOAD_DIR", tmp_path)

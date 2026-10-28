@@ -5,13 +5,13 @@ import pytest
 if not os.getenv("DATABASE_URL"):
     pytest.skip("DATABASE_URL is required for PostgreSQL tests", allow_module_level=True)
 
-from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import delete  # noqa: E402
+from fastapi.testclient import TestClient
+from sqlalchemy import delete
 
-from app.database import SessionLocal  # noqa: E402
-from app.main import app  # noqa: E402
-from app.models import Memory  # noqa: E402
-from app.routes import images  # noqa: E402
+from app.database import SessionLocal
+from app.main import app
+from app.models import Memory
+from app.routes import images
 
 client = TestClient(app)
 

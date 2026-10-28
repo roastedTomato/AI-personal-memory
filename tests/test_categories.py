@@ -2,7 +2,10 @@ import json
 
 from sqlalchemy import text
 
-from app.services.categories import normalize_category, normalize_existing_memory_categories
+from app.services.categories import (
+    normalize_category,
+    normalize_existing_memory_categories,
+)
 
 
 def test_category_aliases_are_stable():
@@ -44,6 +47,7 @@ def test_existing_category_cleanup_updates_category_json_only():
 
 def test_memory_create_and_update_normalize_category():
     from fastapi.testclient import TestClient
+
     from app.main import app
     client = TestClient(app)
     created = client.post("/memories", json={

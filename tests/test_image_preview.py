@@ -22,10 +22,11 @@ def test_previews_are_small_cached_and_preserve_original(tmp_path):
 
 def test_image_endpoint_versions_cache_and_ownership(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
-    from app.main import app
-    from app.routes import images
+
     from app.database import SessionLocal
+    from app.main import app
     from app.models import Memory
+    from app.routes import images
     monkeypatch.setattr(images, "UPLOAD_DIR", tmp_path)
     client = TestClient(app)
     stream = BytesIO()

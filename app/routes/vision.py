@@ -2,9 +2,9 @@ import hashlib
 import json
 import os
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from threading import Lock
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,12 +16,13 @@ from ..database import get_db
 from ..models import Memory
 from ..services import vision
 from ..services.categories import normalize_category
-from ..services.tags import normalize_tags
 from ..services.embedding import refresh_embedding_safely
+from ..services.tags import normalize_tags
 from .images import managed_image, owned
 from .memories import to_read
 
 router = APIRouter(prefix="/memories", tags=["vision"])
+DatabaseSession = Annotated[Session, Depends(get_db)]
 _gate = Lock()
 
 
@@ -104,7 +105,7 @@ def run_stage(memory_id, payload, stage, db):
             db.commit()
             return envelope(memory)
         metadata.update(status="generated", model=result["model"], usage=result["usage"], duration_ms=result["duration_ms"])
-        memory.updated_at = datetime.now(timezone.utc)
+        memory.updated_at = datetime.now(UTC)
         if stage == "recognition":
             value = result["draft"]
             metadata["status"] = "generated" if value["text"] and value["text"].strip() else "no_text"
@@ -131,29 +132,29 @@ def run_stage(memory_id, payload, stage, db):
 
 
 @router.post("/{memory_id}/image/recognize")
-def recognize(memory_id: int, payload: VisionRequest, db: Session = Depends(get_db)):
+def recognize(memory_id: int, payload: VisionRequest, db: DatabaseSession):
     return run_stage(memory_id, payload, "recognition", db)
 
 
 @router.post("/{memory_id}/image/analyze")
-def analyze(memory_id: int, payload: TextAnalysisRequest, db: Session = Depends(get_db)):
+def analyze(memory_id: int, payload: TextAnalysisRequest, db: DatabaseSession):
     if not payload.text.strip(): raise HTTPException(422, detail="invalid_text")
     return run_stage(memory_id, payload, "analysis", db)
 
 
 @router.post("/{memory_id}/image/reanalyze")
-def reanalyze_image(memory_id: int, payload: VisionRequest, db: Session = Depends(get_db)):
+def reanalyze_image(memory_id: int, payload: VisionRequest, db: DatabaseSession):
     return run_stage(memory_id, payload, "image_full", db)
 
 
 @router.post("/{memory_id}/image/analyze-draft")
-def analyze_draft(memory_id: int, payload: DraftAnalysisRequest, db: Session = Depends(get_db)):
+def analyze_draft(memory_id: int, payload: DraftAnalysisRequest, db: DatabaseSession):
     if not payload.text.strip(): raise HTTPException(422, detail="invalid_text")
     return run_stage(memory_id, payload, "analysis", db)
 
 
 @router.post("/{memory_id}/image/finalize")
-def finalize_image(memory_id: int, payload: ImageFinalizeRequest, db: Session = Depends(get_db)):
+def finalize_image(memory_id: int, payload: ImageFinalizeRequest, db: DatabaseSession):
     memory = owned(db, memory_id)
     db.refresh(memory, with_for_update=True)
     if payload.source_image_path != memory.source_image_path:
@@ -184,7 +185,7 @@ def finalize_image(memory_id: int, payload: ImageFinalizeRequest, db: Session = 
 
 
 @router.patch("/{memory_id}/image/confirmed")
-def update_confirmed_image(memory_id: int, payload: ConfirmedImageUpdate, db: Session = Depends(get_db)):
+def update_confirmed_image(memory_id: int, payload: ConfirmedImageUpdate, db: DatabaseSession):
     memory = owned(db, memory_id)
     db.refresh(memory, with_for_update=True)
     if not memory.source_image_path or memory.confirmation_status == "draft":
@@ -204,7 +205,7 @@ def update_confirmed_image(memory_id: int, payload: ConfirmedImageUpdate, db: Se
 
 
 @router.post("/{memory_id}/image/text/save")
-def save_text(memory_id: int, payload: ManualImageTextRequest, db: Session = Depends(get_db)):
+def save_text(memory_id: int, payload: ManualImageTextRequest, db: DatabaseSession):
     memory = owned(db, memory_id)
     db.refresh(memory, with_for_update=True)
     if not payload.text.strip(): raise HTTPException(422, detail="invalid_text")
@@ -222,13 +223,13 @@ def save_text(memory_id: int, payload: ManualImageTextRequest, db: Session = Dep
 
 
 @router.post("/{memory_id}/image/vision", deprecated=True)
-def legacy(memory_id: int, db: Session = Depends(get_db)):
+def legacy(memory_id: int, db: DatabaseSession):
     owned(db, memory_id)
     raise HTTPException(410, detail="use_two_step_image_flow")
 
 
 @router.post("/{memory_id}/image/vision/accept")
-def accept(memory_id: int, payload: VisionAccept, db: Session = Depends(get_db)):
+def accept(memory_id: int, payload: VisionAccept, db: DatabaseSession):
     memory = owned(db, memory_id)
     db.refresh(memory, with_for_update=True)
     draft = json.loads(memory.vision_draft) if memory.vision_draft else {}
@@ -255,7 +256,7 @@ def accept(memory_id: int, payload: VisionAccept, db: Session = Depends(get_db))
 
 
 @router.delete("/{memory_id}/image/vision", status_code=204)
-def reject(memory_id: int, db: Session = Depends(get_db)):
+def reject(memory_id: int, db: DatabaseSession):
     memory = owned(db, memory_id)
     memory.vision_draft = None
     db.commit()

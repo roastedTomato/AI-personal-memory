@@ -8,7 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..query_plan import Filter, KeywordMatch, Limit, QueryPlan, SemanticMatch, Sort
-from . import embedding, retrieval_tools
+from . import embedding, retrieval_tools, vision
 
 
 class MemoryMatch(BaseModel):
@@ -91,7 +91,7 @@ def execute_query_plan(plan: QueryPlan | dict, db: Session) -> QueryResult:
     try:
         # SELECT must not autoflush unrelated pending writes in the caller's session.
         with db.no_autoflush:
-            statement = retrieval_tools.structured_search(filters, sorts)
+            statement = retrieval_tools.structured_search(filters, sorts, db=db)
             for operation in keywords:
                 statement = retrieval_tools.keyword_search(statement, operation)
             scores = []
@@ -121,7 +121,7 @@ def execute_query_plan(plan: QueryPlan | dict, db: Session) -> QueryResult:
                     memory_url=f'/memories/{memory.id}', source_type=memory.source_type,
                     source_image_url=f'/memories/{memory.id}/image/file' if memory.source_image_path else None,
                     confirmed_content=embedding.build_embedding_text(memory),
-                    event_date=memory.event_date, due_date=memory.due_date,
+                    event_date=retrieval_tools.event_day(memory), due_date=memory.due_date,
                     amount=memory.amount, currency=memory.currency, location=memory.location,
                     reminder_at=memory.reminder_at, relevance=float(row[1]) if semantics else None))
             return QueryResult(status='completed' if memories else 'no_matches', memories=memories,
@@ -129,6 +129,6 @@ def execute_query_plan(plan: QueryPlan | dict, db: Session) -> QueryResult:
                                applied_operations=[op.model_dump() for op in filters + keywords + semantics + sorts + limits])
     except SQLAlchemyError:
         return _failure('database_error', methods)
-    except Exception:
+    except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError, RuntimeError, vision.VisionError):
         # Do not echo provider output, SQL parameters, document content, or secrets.
         return _failure('semantic_unavailable' if stage == 'semantic' else 'retrieval_failed', methods)

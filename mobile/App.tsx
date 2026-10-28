@@ -103,19 +103,21 @@ function AppContent() {
   const [question, setQuestion] = useState("");
   const [questionBusy, setQuestionBusy] = useState(false);
   const questionLock = useRef(false);
+  const conversationId = useRef<string | null>(null);
   const [answer, setAnswer] = useState<{ status: string; answer: string; sources: { memory_id: number; title: string; event_date: string | null }[] } | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [questionError, setQuestionError] = useState<string | null>(null);
   const askMemories = () => {
     if (!question.trim() || questionLock.current) return;
-    Alert.alert("Ask your Memories", "Your question and up to five matching confirmed Memories will be sent to OpenAI to answer. Continue?", [
+    Alert.alert("Ask your Memories", "Your question, any clarification details, and a bounded selection of matching confirmed Memories will be sent to OpenAI to answer. Continue?", [
       { text: "Cancel", style: "cancel" },
       { text: "Continue", onPress: async () => {
         if (questionLock.current) return;
         questionLock.current = true; setQuestionBusy(true); setQuestionError(null);
         setChatMessages((messages) => [...messages, { id: `user-${Date.now()}`, role: "user", content: question.trim() }]);
         try {
-          const result = await request<{ status: string; answer: string; sources: { memory_id: number; title: string; event_date: string | null }[] }>("/memories/query", { method: "POST", body: JSON.stringify({ question: question.trim(), consent: true, today: localDay(new Date()) }) });
+          const result = await request<{ conversation_id?: string; status: string; answer: string; sources: { memory_id: number; title: string; event_date: string | null }[] }>("/memories/query", { method: "POST", body: JSON.stringify({ question: question.trim(), consent: true, today: localDay(new Date()), conversation_id: conversationId.current, is_clarification_reply: answer?.status === "needs_clarification" }) });
+          if (result.conversation_id) conversationId.current = result.conversation_id;
           setAnswer(result); setChatMessages((messages) => [...messages, { id: `assistant-${Date.now()}`, role: "assistant", content: result.answer, sources: result.sources }]); setQuestion("");
         } catch (error) { setQuestionError(`Unable to answer: ${String(error)} You can try again.`); }
         finally { questionLock.current = false; setQuestionBusy(false); }

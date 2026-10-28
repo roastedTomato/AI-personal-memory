@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
 from app.services import ocr
 
 
@@ -39,10 +40,11 @@ def test_ocr_failures(monkeypatch, tmp_path, mode, expected, error):
 @pytest.mark.skipif(not os.getenv("DATABASE_URL"), reason="isolated PostgreSQL required")
 def test_ocr_api_content_protection_and_fallback(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
-    from app.main import app
-    from app.routes import images
+
     from app.database import SessionLocal
+    from app.main import app
     from app.models import Memory
+    from app.routes import images
     client = TestClient(app)
     monkeypatch.setattr(images, "UPLOAD_DIR", tmp_path)
     created = client.post("/memories", json={"title": "OCR test", "original_text": "original", "confirmed_content": "confirmed"}).json()

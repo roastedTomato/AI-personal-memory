@@ -2,7 +2,11 @@ import json
 
 from sqlalchemy import text
 
-from app.services.tags import canonical_tag, normalize_existing_memory_tags, normalize_tags
+from app.services.tags import (
+    canonical_tag,
+    normalize_existing_memory_tags,
+    normalize_tags,
+)
 
 
 def test_tag_normalization_examples():
@@ -31,6 +35,7 @@ def test_existing_tag_cleanup_only_changes_tag_data():
 
 def test_create_and_update_normalize_tags():
     from fastapi.testclient import TestClient
+
     from app.main import app
     client = TestClient(app)
     created = client.post("/memories", json={"title": "Tags", "original_text": "Wonder opportunity", "confirmed_content": "confirmed", "tags": ["Wonders", "Wonder opportunity", "December", "Weekly"]})

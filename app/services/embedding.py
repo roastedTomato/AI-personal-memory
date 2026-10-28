@@ -1,11 +1,14 @@
 """Confirmed Memory text and bounded OpenAI embedding generation."""
-import json
 import hashlib
+import json
 import math
 import os
-import urllib.request
 import urllib.error
-from datetime import datetime, timezone
+import urllib.request
+from datetime import UTC, datetime
+from importlib import import_module
+
+from sqlalchemy.exc import SQLAlchemyError
 
 MODEL = "text-embedding-3-small"
 DIMENSIONS = 1536
@@ -40,6 +43,7 @@ def refresh_embedding(memory_id, user_id):
     """Separate transaction: a provider failure cannot undo a saved Memory."""
     from sqlalchemy import select
     from sqlalchemy.orm.attributes import flag_modified
+
     from ..database import SessionLocal
     from ..models import Memory
     with SessionLocal() as db:
@@ -68,7 +72,7 @@ def refresh_embedding(memory_id, user_id):
             error = {401: "authentication_failed", 403: "permission_denied", 429: "quota_or_rate_limit", 400: "invalid_input"}.get(exc.code, "provider_error")
         except (TimeoutError, urllib.error.URLError, OSError):
             vector, error = None, "network_or_timeout"
-        except Exception:
+        except (ValueError, TypeError, KeyError, IndexError, AttributeError):
             vector, error = None, "invalid_output_or_missing_key"
         db.expire_all()
         memory = db.scalar(select(Memory).where(Memory.id == memory_id, Memory.user_id == user_id).with_for_update())
@@ -79,7 +83,7 @@ def refresh_embedding(memory_id, user_id):
         memory.embedding = vector
         memory.embedding_status = "failed" if error else "completed"
         memory.embedding_error = error
-        memory.embedding_updated_at = datetime.now(timezone.utc)
+        memory.embedding_updated_at = datetime.now(UTC)
         memory.updated_at = memory.updated_at
         flag_modified(memory, "updated_at")
         db.commit()
@@ -89,7 +93,7 @@ def refresh_embedding(memory_id, user_id):
 def refresh_embedding_safely(memory):
     try:
         return refresh_embedding(memory.id, memory.user_id)
-    except Exception:
+    except (SQLAlchemyError, OSError, ValueError, TypeError, KeyError, IndexError, AttributeError):
         # Database failures must not turn a successful Memory save into an error.
         return "failed"
 
@@ -127,20 +131,21 @@ def build_embedding_text(memory) -> str:
 
 if __name__ == "__main__":
     from sqlalchemy import select
-    from ..main import app  # Initialize the schema before running the backfill.
+
     from ..config import LOCAL_USER_ID
     from ..database import SessionLocal
     from ..models import Memory
 
     if not os.getenv("OPENAI_API_KEY", "").strip():
         raise SystemExit("OPENAI_API_KEY is missing")
+    import_module("app.main")  # Initialize the schema before running the backfill.
     with SessionLocal() as db:
         ids = list(db.scalars(select(Memory.id).where(Memory.user_id == LOCAL_USER_ID)))
     counts = {"completed": 0, "failed": 0, "skipped": 0}
     for memory_id in ids:
         try:
             result = refresh_embedding(memory_id, LOCAL_USER_ID)
-        except Exception:
+        except (SQLAlchemyError, OSError, ValueError, TypeError, KeyError, IndexError, AttributeError):
             result = "failed"
         counts[result] += 1
         print(f"Memory {memory_id}: {result}", flush=True)

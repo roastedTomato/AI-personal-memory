@@ -1,26 +1,27 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Memory
 from ..schemas import AIAssistRequest, AIAssistResponse, AIDraft, AIDraftField
 from ..services.mock_ai import generate_draft
 from .memories import owned_memory
 
 router = APIRouter(prefix="/memories", tags=["ai-assistance"])
+DatabaseSession = Annotated[Session, Depends(get_db)]
 
 
 @router.post("/{memory_id}/assist", response_model=AIAssistResponse)
-def assist_memory(memory_id: int, payload: AIAssistRequest, db: Session = Depends(get_db)) -> AIAssistResponse:
+def assist_memory(memory_id: int, payload: AIAssistRequest, db: DatabaseSession) -> AIAssistResponse:
     memory = owned_memory(db, memory_id)
     try:
         result = generate_draft(memory.original_text, payload.operations)
         memory.generated_content = result.summary
         memory.ai_status = "succeeded"
         memory.ai_error = None
-        memory.ai_generated_at = datetime.now(timezone.utc)
+        memory.ai_generated_at = datetime.now(UTC)
         memory.confirmation_status = "generated"
         db.commit()
         return AIAssistResponse(

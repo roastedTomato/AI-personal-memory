@@ -7,7 +7,7 @@ import hashlib
 import json
 import math
 import os
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -20,7 +20,7 @@ from sqlalchemy.ext.compiler import compiles, deregister
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import BinaryExpression, Cast
 
-from app.query_plan import Filter, KeywordMatch, QueryPlan, SemanticMatch
+from app.query_plan import KeywordMatch, QueryPlan, SemanticMatch
 from app.services import embedding, query_router, retrieval_tools
 
 
@@ -92,11 +92,11 @@ def store(monkeypatch):
     Memory.__table__.create(engine)
     with Session(engine) as db:
         def add(title='Memory', indexed=False, **values):
-            fields = dict(user_id='local-dev-user', title=title, original_text='unreviewed private original',
-                          confirmed_content='Reviewed content', category='event', tags='[]',
-                          confirmation_status='confirmed', source_type='manual',
-                          created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-                          updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+            fields = {'user_id': 'local-dev-user', 'title': title, 'original_text': 'unreviewed private original',
+                          'confirmed_content': 'Reviewed content', 'category': 'event', 'tags': '[]',
+                          'confirmation_status': 'confirmed', 'source_type': 'manual',
+                          'created_at': datetime(2026, 1, 1, tzinfo=UTC),
+                          'updated_at': datetime(2026, 1, 1, tzinfo=UTC)}
             fields.update(values)
             memory = Memory(**fields)
             db.add(memory)
@@ -175,7 +175,7 @@ def test_amount_operators_and_nulls(store, operator, value, expected):
 
 
 def test_reminder_timestamp_filter(store):
-    future = store.add('Reminder', reminder_at=datetime(2026, 12, 1, 10, tzinfo=timezone.utc))
+    future = store.add('Reminder', reminder_at=datetime(2026, 12, 1, 10, tzinfo=UTC))
     store.add('No reminder')
     assert ids(execute(store, filt('reminder_at', 'gte', '2026-12-01T00:00:00+00:00'), sort('reminder_at'))) == [future.id]
 
@@ -228,10 +228,10 @@ def test_operation_order_and_limit_after_filters(store):
 
 
 def test_multiple_limits_sort_priority_and_deterministic_ties(store):
-    first = store.add('A', amount=Decimal('10'))
-    second = store.add('A', amount=Decimal('10'))
-    store.add('Z', amount=Decimal('10'))
-    store.add('B', amount=Decimal('5'))
+    first = store.add('A', amount=Decimal(10))
+    second = store.add('A', amount=Decimal(10))
+    store.add('Z', amount=Decimal(10))
+    store.add('B', amount=Decimal(5))
     result = execute(store, limit(3), sort('amount', 'desc'), sort('title'), limit(2))
     assert ids(result) == [first.id, second.id]
 
@@ -242,8 +242,8 @@ def test_multiple_keywords_are_intersected(store):
     assert ids(execute(store, keyword('Spark'), keyword('insurance'))) == [match.id]
 
 
-def test_empty_results_and_missing_date_not_inferred(store):
-    store.add('Legacy date', confirmed_vision=json.dumps({'date': '2026-12-01'}))
+def test_empty_results_and_uncertain_date_not_inferred(store):
+    store.add('Uncertain legacy date', confirmed_vision=json.dumps({'date': '2026-12-01', 'uncertain_fields': ['date']}))
     result = execute(store, filt('event_date', 'gte', '2026-10-29'))
     assert result.status == 'no_matches' and result.memories == [] and result.error is None
 
@@ -311,8 +311,8 @@ def test_semantic_has_no_implicit_five_result_cap(store, monkeypatch):
 
 
 def test_explicit_sort_overrides_similarity(store, monkeypatch):
-    store.add('Expensive', indexed=True, amount=Decimal('100'))
-    cheap = store.add('Cheap', indexed=True, amount=Decimal('10'))
+    store.add('Expensive', indexed=True, amount=Decimal(100))
+    cheap = store.add('Cheap', indexed=True, amount=Decimal(10))
     cheap.embedding = vector(0.6, 0.8)
     store.db.commit()
     monkeypatch.setattr(embedding, 'generate_embedding', Mock(return_value=vector()))
@@ -341,7 +341,7 @@ def test_no_indexed_candidates_skips_embedding_call(store):
 def test_semantic_sql_is_parameterized_and_owner_scoped(store, monkeypatch):
     store.add('Valid', indexed=True)
     monkeypatch.setattr(embedding, 'generate_embedding', Mock(return_value=vector()))
-    statement, score = retrieval_tools.semantic_search(store.db, retrieval_tools.structured_search([], []), SemanticMatch(**semantic('content')))
+    statement, _score = retrieval_tools.semantic_search(store.db, retrieval_tools.structured_search([], []), SemanticMatch(**semantic('content')))
     compiled = statement.compile(dialect=postgresql.dialect())
     sql = str(compiled)
     assert '<=>' in sql and 'vector(1536)' in sql
@@ -431,3 +431,142 @@ def test_database_error_during_semantic_search_is_not_embedding_error(store, mon
     result = execute(store, semantic('content'))
     assert result.status == 'execution_failed' and result.error.code == 'database_error'
     assert result.memories == [] and result.applied_operations == []
+
+
+@pytest.fixture
+def regression_api(store, monkeypatch):
+    from app.query_plan import QueryPlan
+    from app.routes import query
+    from app.services import query_conversation, vision
+
+    calls = []
+    configured = {'plan': None}
+    def request(payload, output_model):
+        data = json.loads(payload['input'][0]['content'][0]['text'])
+        calls.append((output_model, data))
+        if output_model is QueryPlan:
+            return {'draft': configured['plan']}
+        memories = data['memories']
+        assert memories
+        memory_id = memories[0]['memory_id']
+        return {'draft': {'answer': f"Supported answer [Memory {memory_id}]", 'memory_ids': [memory_id]}}
+    monkeypatch.setattr(vision, '_request', request)
+    def ask(question, **values):
+        return query.query_memories(query.MemoryQuestion(question=question, consent=True,
+                                    today=date(2026, 10, 29), **values), store.db)
+    yield SimpleNamespace(ask=ask, configured=configured, calls=calls)
+    query_conversation._pending.clear()
+
+
+def test_regression_next_event_uses_legacy_date_before_limits(store, regression_api):
+    fete = store.add('Hanmer Springs Fete', category='notice', confirmation_status='accepted',
+                     confirmed_vision=json.dumps({'date': '2026-10-31'}))
+    store.add('Later event', event_date=date(2026, 11, 10))
+    store.add('Other owner earlier', user_id='other', event_date=date(2026, 10, 30))
+    store.add('Draft earlier', confirmation_status='draft', event_date=date(2026, 10, 30))
+    regression_api.configured['plan'] = plan(filt('category', 'eq', 'event'),
+        semantic('a forthcoming social gathering'), filt('event_date', 'gte', '2026-10-29'), sort('event_date'), limit(1))
+    response = regression_api.ask('What is my next upcoming event?')
+    assert response['status'] == 'completed'
+    assert response['sources'][0]['memory_id'] == fete.id
+    assert response['sources'][0]['event_date'] == '2026-10-31'
+    assert response['sources'][0]['citation'] == f'[Memory {fete.id}]'
+    assert regression_api.calls[-1][1]['memories'][0]['event_date'] == '2026-10-31'
+    embedding.generate_embedding.assert_not_called()
+    # Explicit API category filters remain strict; only speculative model filters
+    # are normalized. This intentionally selects the later typed event instead.
+    explicit = regression_api.ask('What is my next upcoming event?', category='event')
+    assert explicit['sources'][0]['title'] == 'Later event'
+
+
+@pytest.mark.parametrize('semantic_operation', [True, False])
+def test_regression_car_insurance_not_restricted_to_bill_or_exact_phrase(store, regression_api, monkeypatch, semantic_operation):
+    policy = store.add('Motor vehicle cover', category='notice', indexed=True,
+                       confirmed_content='Comprehensive motor vehicle insurance renewal information')
+    operations = [filt('category', 'eq', 'bill'), keyword('car insurance')]
+    if semantic_operation:
+        operations.append(semantic('car insurance'))
+    regression_api.configured['plan'] = plan(*operations)
+    monkeypatch.setattr(embedding, 'generate_embedding', Mock(return_value=vector()))
+    response = regression_api.ask('What did I save about car insurance?')
+    assert response['status'] == 'completed'
+    assert response['sources'][0]['memory_id'] == policy.id
+    assert response['retrieval_method'] == ['structured_search', 'semantic_search']
+
+
+def test_regression_location_reply_resumes_original_without_llm_or_retrieval(store, regression_api, monkeypatch):
+    from app.services import query_conversation, retrieval_tools
+    regression_api.configured['plan'] = plan(filt('event_date', 'gte', '2026-10-29'),
+        {'operation': 'calculate_distance', 'field': 'location', 'origin': None, 'unit': 'km', 'order': 'asc'},
+        questions=['What is your current location?'])
+    first = regression_api.ask('Which upcoming event is closest to me?')
+    assert first['status'] == 'needs_clarification' and len(regression_api.calls) == 1
+    pending = query_conversation._pending[('local-dev-user', first['conversation_id'])]
+    resumed = query_conversation.resume_plan(pending, 'Hamilton')
+    assert resumed.operations[-1].origin == 'Hamilton'
+    assert resumed.status == 'requires_future_tools'
+    monkeypatch.setattr(retrieval_tools, 'structured_search', Mock(side_effect=AssertionError('Must not retrieve')))
+    second = regression_api.ask('Hamilton', conversation_id=first['conversation_id'], is_clarification_reply=True)
+    assert second['status'] == 'requires_future_tools'
+    assert 'nearest location' in second['answer'] and 'calculate_distance' not in second['answer']
+    assert second['sources'] == [] and len(regression_api.calls) == 1
+    assert not query_conversation._pending
+
+
+def test_regression_new_question_replaces_pending_clarification(store, regression_api):
+    regression_api.configured['plan'] = plan(questions=['What location should I use?'])
+    first = regression_api.ask('Which event is closest?')
+    regression_api.configured['plan'] = plan(keyword('insurance'))
+    second = regression_api.ask('New question: Find my insurance', conversation_id=first['conversation_id'],
+                                is_clarification_reply=True)
+    assert second['status'] == 'no_matches'
+    assert regression_api.calls[-1][1]['question'] == 'Find my insurance'
+
+
+def test_regression_conversation_and_owner_isolation_and_expiry(monkeypatch):
+    from app.query_plan import QueryPlan
+    from app.services import query_conversation
+    pending_plan = QueryPlan.model_validate(plan(questions=['Where should I start?']))
+    query_conversation.save_pending('owner-a', 'conversation-a', {}, pending_plan)
+    assert query_conversation.take_pending('owner-b', 'conversation-a') is None
+    assert query_conversation.take_pending('owner-a', 'conversation-b') is None
+    clock = query_conversation.monotonic()
+    monkeypatch.setattr(query_conversation, 'monotonic', lambda: clock + query_conversation.TTL_SECONDS + 1)
+    assert query_conversation.take_pending('owner-a', 'conversation-a') is None
+
+
+def test_regression_expired_followup_is_not_independent_search(regression_api):
+    from uuid import uuid4
+    response = regression_api.ask('Hamilton', conversation_id=str(uuid4()), is_clarification_reply=True)
+    assert response['status'] == 'needs_clarification'
+    assert 'expired' in response['answer'] and regression_api.calls == []
+
+
+def test_regression_clarifications_use_supported_natural_language():
+    from app.services.intent_classifier import friendly_question
+    assert 'created_at' not in friendly_question('Should I use created_at or event_date?')
+    assert 'event_date' not in friendly_question('Should I use created_at or event_date?')
+    payment = friendly_question('Should I use payment dates or created_at?')
+    assert 'saved' in payment and 'not available separately' in payment
+
+
+def test_regression_legacy_dates_reject_invalid_uncertain_and_prefer_typed_date(store):
+    from app.services.retrieval_tools import event_day
+    for value in ['not json', '{}', '{"date":"2026-02-30"}',
+                  '{"date":"2026-10-31","uncertain_fields":["date"]}']:
+        memory = store.add(confirmed_vision=value)
+        assert event_day(memory) is None
+    memory = store.add(event_date=date(2026, 11, 1), confirmed_vision='{"date":"2026-10-31"}')
+    assert event_day(memory) == date(2026, 11, 1)
+
+
+def test_regression_insurance_spending_returns_unsupported_not_invalid(regression_api, monkeypatch):
+    monkeypatch.setattr(retrieval_tools, 'structured_search', Mock(side_effect=AssertionError('Must not retrieve')))
+    response = regression_api.ask('How much did I spend on insurance last year?')
+    assert response['status'] == 'requires_future_tools'
+    assert response['unsupported_capabilities'] == ['aggregate']
+    assert 'calculating totals' in response['answer']
+    assert 'could not understand' not in response['answer'].lower()
+    assert response['clarification_questions'] == [] and response['sources'] == []
+    assert regression_api.calls == []
+    embedding.generate_embedding.assert_not_called()

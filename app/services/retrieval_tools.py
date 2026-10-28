@@ -1,17 +1,27 @@
 """Composable read-only retrieval queries. No limits are imposed by these tools."""
 import hashlib
+import json
 from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Float, cast, false, literal, or_, select
+from sqlalchemy import Float, case, cast, false, literal, or_, select
 
-from ..query_plan import DATE_FIELDS, TIME_FIELDS, FieldName, Filter, KeywordMatch, SemanticMatch, Sort
+from ..query_plan import (
+    DATE_FIELDS,
+    TIME_FIELDS,
+    FieldName,
+    Filter,
+    KeywordMatch,
+    SemanticMatch,
+    Sort,
+)
 from . import embedding
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
     from sqlalchemy.sql import Select
+
     from ..models import Memory
 
 SIMILARITY_THRESHOLD = 0.25  # Same initial, uncalibrated threshold as existing Q&A.
@@ -28,6 +38,7 @@ def _owned(statement):
 
 def _column(field: str):
     from typing import get_args
+
     from ..models import Memory
 
     # Never pass model-provided identifiers to SQL or unrestricted getattr.
@@ -39,18 +50,43 @@ def _literal_pattern(value: str) -> str:
     return '%' + value.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
 
 
-def structured_search(filters: list[Filter], sorts: list[Sort]) -> 'Select':
+def event_day(memory) -> date | None:
+    """Typed date wins; accept only valid, non-uncertain reviewed legacy dates."""
+    if memory.event_date is not None:
+        return memory.event_date
+    try:
+        fields = json.loads(memory.confirmed_vision or '{}')
+        if 'date' in fields.get('uncertain_fields', []):
+            return None
+        value = fields['date']
+        parsed = date.fromisoformat(value)
+        return parsed if parsed.isoformat() == value else None
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
+def structured_search(filters: list[Filter], sorts: list[Sort], db: 'Session | None' = None) -> 'Select':
     """AND structured predicates; sort keys have input priority, NULLs always last.
 
-    Uses typed columns only. Legacy JSON dates are intentionally not inferred here.
+    Resolve reviewed legacy event dates without changing records or casting invalid JSON.
     SQL NULL never satisfies an ordinary comparison, including ne.
     """
     from ..models import Memory
 
     statement = _owned(select(Memory))
+    event_column = Memory.event_date
+    if db is not None and any(op.field == 'event_date' for op in [*filters, *sorts]):
+        # Parse JSON in Python to safely reject invalid/uncertain dates. The CASE
+        # binds valid dates by ID so SQL filtering AND chronological sorting use
+        # the same date before semantic ranking and any result limit.
+        rows = db.execute(_owned(select(Memory.id, Memory.event_date, Memory.confirmed_vision)).where(
+            Memory.event_date.is_(None), Memory.confirmed_vision.is_not(None))).all()
+        legacy = {row.id: day for row in rows if (day := event_day(row)) is not None}
+        if legacy:
+            event_column = case(legacy, value=Memory.id, else_=Memory.event_date)
     for raw in filters:
         operation = Filter.model_validate(raw.model_dump())
-        column = _column(operation.field)
+        column = event_column if operation.field == 'event_date' else _column(operation.field)
         if operation.operator == 'is_null':
             predicate = column.is_(None)
         elif operation.operator == 'is_not_null':
@@ -72,7 +108,7 @@ def structured_search(filters: list[Filter], sorts: list[Sort]) -> 'Select':
         statement = statement.where(predicate)
     for raw in sorts:
         operation = Sort.model_validate(raw.model_dump())
-        column = _column(operation.field)
+        column = event_column if operation.field == 'event_date' else _column(operation.field)
         statement = statement.order_by((column.asc() if operation.direction == 'asc' else column.desc()).nulls_last())
     return statement
 

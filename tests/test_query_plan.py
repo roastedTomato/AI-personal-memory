@@ -6,7 +6,8 @@ import pytest
 from pydantic import ValidationError
 
 from app.query_plan import QueryPlan
-from app.services import intent_classifier as classifier, vision
+from app.services import intent_classifier as classifier
+from app.services import vision
 
 
 def plan(*operations, questions=None):
@@ -132,3 +133,19 @@ def test_schema_has_required_properties_for_strict_output():
         if node.get('type') == 'object':
             assert node['additionalProperties'] is False
             assert set(node['required']) == set(node['properties'])
+
+
+@pytest.mark.parametrize('question', [
+    'How much did I spend on insurance last year?',
+    'How much have I spent on groceries this month?',
+])
+def test_spending_total_is_valid_future_capability_without_provider(monkeypatch, question):
+    monkeypatch.setattr(vision, '_request', lambda *args: pytest.fail('Unexpected provider request'))
+    result = classifier.classify_question(question, date(2026, 10, 29))
+    assert result.status == 'requires_future_tools'
+    assert result.required_future_tools == ['aggregate']
+    assert result.operations[0].query == question
+    assert result.operations[1].function == 'sum'
+    assert result.operations[1].field == 'amount'
+    assert result.clarification_questions == []
+    assert QueryPlan.model_validate_json(result.model_dump_json()).status == 'requires_future_tools'
