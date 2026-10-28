@@ -34,10 +34,6 @@ The current implementation is intentionally local and single-user. Its design pr
 
 These screenshots show the current app, including the Memory library, RAG-based AI Q&A, and Memory details.
 
-### Memory list
-
-![Memory list](docs/screenshots/memory-list.jpg)
-
 ### AI Q&A
 
 ![AI Q&A](docs/screenshots/ai-qa.jpg)
@@ -45,6 +41,10 @@ These screenshots show the current app, including the Memory library, RAG-based 
 ### Memory details and original source
 
 ![Memory detail](docs/screenshots/memory-detail.jpg)
+
+### Memory list
+
+![Memory list](docs/screenshots/memory-list.jpg)
 
 ### Local notification
 
