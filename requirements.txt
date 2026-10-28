@@ -5,3 +5,4 @@ psycopg[binary]==3.3.6
 
 
 python-multipart==0.0.20
+Pillow==13.0.0

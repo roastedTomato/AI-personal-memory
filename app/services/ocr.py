@@ -15,8 +15,9 @@ def recognize(path: Path) -> dict:
         binary = os.environ.get("TESSERACT_CMD") or shutil.which("tesseract")
         if not binary:
             raise FileNotFoundError
+        languages = os.environ.get("TESSERACT_LANGUAGES", "eng").strip() or "eng"
         process = subprocess.run(
-            [binary, path.name, "stdout", "-l", "eng+chi_sim", "--psm", "6"],
+            [binary, path.name, "stdout", "-l", languages, "--psm", "6"],
             cwd=path.resolve().parent, capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=TIMEOUT_SECONDS, check=False, env={**os.environ, "OMP_THREAD_LIMIT": "1"},
         )

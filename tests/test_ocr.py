@@ -7,11 +7,12 @@ import pytest
 from app.services import ocr
 
 
-def test_real_bilingual_ocr(tmp_path):
+def test_real_bilingual_ocr(tmp_path, monkeypatch):
     import shutil
     source = Path("/tmp/x.png")
     if not source.exists() or not shutil.which("tesseract"):
         pytest.skip("POC synthetic fixture or tesseract unavailable")
+    monkeypatch.setenv("TESSERACT_LANGUAGES", "eng+chi_sim")
     result = ocr.recognize(source)
     assert result["status"] == "completed"
     assert "Memory Test 123" in result["text"]
@@ -21,9 +22,11 @@ def test_real_bilingual_ocr(tmp_path):
 
 @pytest.mark.parametrize("mode,expected,error", [("empty", "no_text", None), ("failure", "failed", "recognition_failed"), ("timeout", "failed", "timeout"), ("missing", "failed", "ocr_unavailable")])
 def test_ocr_failures(monkeypatch, tmp_path, mode, expected, error):
+    monkeypatch.delenv("TESSERACT_LANGUAGES", raising=False)
     monkeypatch.setattr(ocr.shutil, "which", lambda _: "/test/tesseract")
     def run(args, **kwargs):
         assert isinstance(args, list) and not kwargs.get("shell", False)
+        assert args[args.index("-l") + 1] == "eng"
         assert kwargs["timeout"] == 15
         if mode == "timeout": raise subprocess.TimeoutExpired(args, 15)
         if mode == "missing": raise FileNotFoundError

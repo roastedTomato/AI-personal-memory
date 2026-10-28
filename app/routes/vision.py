@@ -9,10 +9,11 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import text, update
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..models import Memory
 from ..services import vision
 from ..services.categories import normalize_category
 from ..services.tags import normalize_tags
@@ -94,7 +95,12 @@ def run_stage(memory_id, payload, stage, db):
             result = vision.recognize_image(path) if stage == "recognition" else vision.analyze_image(path) if stage == "image_full" else vision.analyze_text(payload.text)
         except vision.VisionError as exc:
             metadata.update(status="failed", error=exc.code, duration_ms=round((time.perf_counter()-started)*1000), usage=exc.usage, diagnostics=exc.diagnostics)
-            memory.vision_metadata = json.dumps(metadata)
+            # A failed provider attempt changes diagnostics, not the content version.
+            # Set updated_at explicitly so SQLAlchemy's onupdate does not expire
+            # an otherwise valid draft retained for manual review.
+            db.execute(update(Memory).where(Memory.id == memory.id).values(
+                vision_metadata=json.dumps(metadata), updated_at=memory.updated_at,
+            ))
             db.commit()
             return envelope(memory)
         metadata.update(status="generated", model=result["model"], usage=result["usage"], duration_ms=result["duration_ms"])

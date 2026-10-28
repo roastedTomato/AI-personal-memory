@@ -1,8 +1,11 @@
 from pathlib import Path
+import hashlib
+from typing import Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi.responses import FileResponse, Response
+from PIL import UnidentifiedImageError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -11,6 +14,7 @@ from ..database import get_db
 from ..models import Memory
 from ..schemas import MemoryRead, ImageParseRequest
 from ..services.ocr import recognize
+from ..services.image_preview import image_preview
 from ..services.mock_ai import generate_draft
 from .memories import to_read
 
@@ -62,9 +66,21 @@ def create_from_image(image: UploadFile = File(...), db: Session = Depends(get_d
 
 
 @router.get("/{memory_id}/image/file")
-def image_file(memory_id: int, db: Session = Depends(get_db)):
+def image_file(memory_id: int, request: Request, variant: Literal["original", "thumbnail", "preview"] = "original", v: str | None = None, db: Session = Depends(get_db)):
     memory = owned(db, memory_id)
-    return FileResponse(managed_image(memory), media_type=memory.source_image_mime_type or "application/octet-stream")
+    path = managed_image(memory)
+    stat = path.stat()
+    etag = '"' + hashlib.sha256(f"{path.name}:{stat.st_mtime_ns}:{stat.st_size}:{variant}".encode()).hexdigest() + '"'
+    headers = {"ETag": etag, "Cache-Control": "private, max-age=86400" if v == path.name else "private, no-cache"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    if variant == "original":
+        return FileResponse(path, media_type=memory.source_image_mime_type or "application/octet-stream", headers=headers)
+    try:
+        content = image_preview(str(path), stat.st_mtime_ns, stat.st_size, variant)
+    except (OSError, ValueError, UnidentifiedImageError):
+        raise HTTPException(status_code=422, detail="Image preview unavailable") from None
+    return Response(content=content, media_type="image/jpeg", headers=headers)
 
 
 @router.post("/{memory_id}/image", response_model=MemoryRead)

@@ -6,6 +6,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as ImagePicker from "expo-image-picker";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
+import { memoryImageUrl } from "./imageUrl";
+import { colors, spacing } from "./styles/theme";
 import Markdown from "react-native-markdown-display";
 import { visionRequestError } from "./apiErrors";
 import { availableTags, displayTags, filterByTags } from "./tagFilter";
@@ -535,14 +537,14 @@ function AppContent() {
   if (screen === "list") {
     const listTagChoices = availableTags(memories);
     const listDisplayedMemories = filterByTags(searchResults ?? memories, selectedTags);
-    return <MemoryListRedesign memories={listDisplayedMemories} tagChoices={listTagChoices} selectedTags={selectedTags} searchKeyword={searchKeyword} searchResults={searchResults} loading={loading} searchLoading={searchLoading} loadError={loadError} searchError={searchError} showTagChoices={showTagChoices} showAddMenu={showAddMenu} onSearchChange={(value) => { setSearchKeyword(value); if (!value.trim()) setSearchResults(null); setSearchError(null); }} onSearch={search} onClearSearch={clearSearch} onToggleTags={() => setShowTagChoices(!showTagChoices)} onToggleTag={(tag) => setSelectedTags((tags) => tags.includes(tag) ? tags.filter((item) => item !== tag) : [...tags, tag])} onClearTags={() => setSelectedTags([])} onClearFilters={clearFilters} onRetry={searchError ? search : load} onRefresh={load} onOpenCreate={openCreate} onOpenCamera={() => chooseNewImage("camera")} onOpenLibrary={() => chooseNewImage("library")} onAsk={() => setScreen("ask")} onOpenMemory={openDetail} onToggleAddMenu={() => setShowAddMenu(!showAddMenu)} onSettings={() => Alert.alert("Settings", "Settings are not available in local mode yet.")} />;
+    return <MemoryListRedesign apiUrl={API_URL} memories={listDisplayedMemories} tagChoices={listTagChoices} selectedTags={selectedTags} searchKeyword={searchKeyword} searchResults={searchResults} loading={loading} searchLoading={searchLoading} loadError={loadError} searchError={searchError} showTagChoices={showTagChoices} showAddMenu={showAddMenu} onSearchChange={(value) => { setSearchKeyword(value); if (!value.trim()) setSearchResults(null); setSearchError(null); }} onSearch={search} onClearSearch={clearSearch} onToggleTags={() => setShowTagChoices(!showTagChoices)} onToggleTag={(tag) => setSelectedTags((tags) => tags.includes(tag) ? tags.filter((item) => item !== tag) : [...tags, tag])} onClearTags={() => setSelectedTags([])} onClearFilters={clearFilters} onRetry={searchError ? search : load} onRefresh={load} onOpenCreate={openCreate} onOpenCamera={() => chooseNewImage("camera")} onOpenLibrary={() => chooseNewImage("library")} onAsk={() => setScreen("ask")} onOpenMemory={openDetail} onToggleAddMenu={() => setShowAddMenu(!showAddMenu)} onSettings={() => Alert.alert("Settings", "Settings are not available in local mode yet.")} />;
   }
-  return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><Text style={styles.eyebrow}>LOCAL LIBRARY</Text><Text style={styles.title}>My Memories</Text><View style={styles.actionPanel}><View style={styles.topActionRow}><View style={styles.actionItem}><Button title="+ New Memory" onPress={openCreate} variant="primary" /></View><View style={styles.actionItem}><Button title="+ Take Photo" onPress={() => chooseNewImage("camera")} variant="primary" disabled={captureBusy} /></View><View style={styles.actionItem}><Button title="+ Choose Photo" onPress={() => chooseNewImage("library")} variant="primary" disabled={captureBusy} /></View></View></View><View style={styles.searchPanel}><View style={styles.searchRow}><TextInput style={styles.searchInput} placeholder="Search title, content, or tags" placeholderTextColor="#78828c" value={searchKeyword} onChangeText={(value) => { setSearchKeyword(value); if (!value.trim()) setSearchResults(null); setSearchError(null); }} onSubmitEditing={search} returnKeyType="search" /><Button title="Search" onPress={search} /></View>{searchResults !== null && <Button title="Clear Search" onPress={clearSearch} />}
+  return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><Text style={styles.eyebrow}>LOCAL LIBRARY</Text><Text style={styles.title}>My Memories</Text><View style={styles.actionPanel}><View style={styles.topActionRow}><View style={styles.actionItem}><Button title="+ New Memory" onPress={openCreate} variant="primary" /></View><View style={styles.actionItem}><Button title="+ Take Photo" onPress={() => chooseNewImage("camera")} variant="primary" disabled={captureBusy} /></View><View style={styles.actionItem}><Button title="+ Choose Photo" onPress={() => chooseNewImage("library")} variant="primary" disabled={captureBusy} /></View></View></View><View style={styles.searchPanel}><View style={styles.searchRow}><TextInput style={styles.searchInput} placeholder="Search title, content, or tags" placeholderTextColor="#9CA3AF" value={searchKeyword} onChangeText={(value) => { setSearchKeyword(value); if (!value.trim()) setSearchResults(null); setSearchError(null); }} onSubmitEditing={search} returnKeyType="search" /><Button title="Search" onPress={search} /></View>{searchResults !== null && <Button title="Clear Search" onPress={clearSearch} />}
 <Button title="Ask My Memories" onPress={() => setScreen("ask")} />
 <View style={styles.tagFilter}><Button title={showTagChoices ? "Hide Tags" : `Filter by Tags${selectedTags.length ? ` (${selectedTags.length})` : ""}`} onPress={() => setShowTagChoices(!showTagChoices)} />
 {selectedTags.length > 0 && <View style={styles.tagRow}>{selectedTags.map((tag) => <TouchableOpacity key={tag} style={styles.selectedTag} onPress={() => toggleTag(tag)}><Text style={styles.selectedTagText} numberOfLines={1}>✕ {tag}</Text></TouchableOpacity>)}<Button title="Clear All" onPress={() => setSelectedTags([])} /></View>}
 {showTagChoices && (tagChoices.length ? <View style={styles.tagRow}>{tagChoices.map((tag) => <TouchableOpacity key={tag} style={selectedTags.includes(tag) ? styles.selectedTag : styles.tagChoice} onPress={() => toggleTag(tag)}><Text style={selectedTags.includes(tag) ? styles.selectedTagText : styles.tagText} numberOfLines={1}>{selectedTags.includes(tag) ? "✓ " : ""}{tag}</Text></TouchableOpacity>)}</View> : <Text style={styles.status}>No tags yet. Add tags to a Memory to filter by them.</Text>)}</View></View>
-{(loading || searchLoading) && <View style={styles.loadingState}><ActivityIndicator color="#27634a" /><Text style={styles.status}>{searchLoading ? "Searching…" : "Loading…"}</Text></View>}
+{(loading || searchLoading) && <View style={styles.loadingState}><ActivityIndicator color={colors.primary} /><Text style={styles.status}>{searchLoading ? "Searching…" : "Loading…"}</Text></View>}
 {(loadError || searchError) && <View style={styles.errorCard}><Text style={styles.error}>{loadError || searchError}</Text><Button title="Try Again" onPress={searchError ? search : load} /></View>}
 {!loading && !loadError && <Text style={styles.resultCount}>{(searchResults !== null || selectedTags.length > 0) ? (displayedMemories.length ? `${displayedMemories.length} ${displayedMemories.length === 1 ? "result" : "results"}` : "No Memories match your search and tags") : (memories.length ? `${memories.length} ${memories.length === 1 ? "Memory" : "Memories"}` : "No Memories yet")}</Text>}
 {!loading && !loadError && !displayedMemories.length ? <View style={styles.emptyState}><Text style={styles.emptyTitle}>{searchResults !== null || selectedTags.length > 0 ? "No Matches" : "Create Your First Memory"}</Text><Text style={styles.supportingText}>{searchResults !== null || selectedTags.length > 0 ? "Try another search or clear the filters." : "Create one manually, take a photo, or choose one from your library."}</Text>{(searchResults !== null || selectedTags.length > 0) && <Button title="Clear All Filters" onPress={clearFilters} />}</View> : <FlatList data={displayedMemories} contentContainerStyle={styles.listContent} keyExtractor={(item) => String(item.id)} renderItem={({ item }) => <TouchableOpacity style={styles.card} onPress={() => openDetail(item)} activeOpacity={0.72}><View style={styles.cardHeader}><Text style={styles.cardTitle} numberOfLines={2}>{item.title} <Text style={styles.cardDate}>· {memoryDate(item.created_at)}</Text></Text>{item.confirmation_status === "draft" && <Text style={styles.draftBadge}>Draft</Text>}</View>{item.category && <Text style={styles.cardMeta}>{item.category}</Text>}<Text style={styles.cardContent} numberOfLines={2}>{item.confirmed_content || (item.source_image_path ? "Image draft — open to continue reviewing" : item.original_text)}</Text><TagChips tags={item.tags} compact /></TouchableOpacity>} refreshing={loading} onRefresh={load} />}</SafeAreaView>;
@@ -552,16 +554,16 @@ export default function App() {
   return <SafeAreaProvider><AppContent /></SafeAreaProvider>;
 }
 
-function MemoryListRedesign({ memories, tagChoices, selectedTags, searchKeyword, searchResults, loading, searchLoading, loadError, searchError, showTagChoices, showAddMenu, onSearchChange, onSearch, onClearSearch, onToggleTags, onToggleTag, onClearTags, onClearFilters, onRetry, onRefresh, onOpenCreate, onOpenCamera, onOpenLibrary, onAsk, onOpenMemory, onToggleAddMenu, onSettings }: { memories: Memory[]; tagChoices: string[]; selectedTags: string[]; searchKeyword: string; searchResults: Memory[] | null; loading: boolean; searchLoading: boolean; loadError: string | null; searchError: string | null; showTagChoices: boolean; showAddMenu: boolean; onSearchChange: (value: string) => void; onSearch: () => void; onClearSearch: () => void; onToggleTags: () => void; onToggleTag: (tag: string) => void; onClearTags: () => void; onClearFilters: () => void; onRetry: () => void; onRefresh: () => void; onOpenCreate: () => void; onOpenCamera: () => void; onOpenLibrary: () => void; onAsk: () => void; onOpenMemory: (memory: Memory) => void; onToggleAddMenu: () => void; onSettings: () => void }) {
+function MemoryListRedesign({ apiUrl, memories, tagChoices, selectedTags, searchKeyword, searchResults, loading, searchLoading, loadError, searchError, showTagChoices, showAddMenu, onSearchChange, onSearch, onClearSearch, onToggleTags, onToggleTag, onClearTags, onClearFilters, onRetry, onRefresh, onOpenCreate, onOpenCamera, onOpenLibrary, onAsk, onOpenMemory, onToggleAddMenu, onSettings }: { apiUrl: string; memories: Memory[]; tagChoices: string[]; selectedTags: string[]; searchKeyword: string; searchResults: Memory[] | null; loading: boolean; searchLoading: boolean; loadError: string | null; searchError: string | null; showTagChoices: boolean; showAddMenu: boolean; onSearchChange: (value: string) => void; onSearch: () => void; onClearSearch: () => void; onToggleTags: () => void; onToggleTag: (tag: string) => void; onClearTags: () => void; onClearFilters: () => void; onRetry: () => void; onRefresh: () => void; onOpenCreate: () => void; onOpenCamera: () => void; onOpenLibrary: () => void; onAsk: () => void; onOpenMemory: (memory: Memory) => void; onToggleAddMenu: () => void; onSettings: () => void }) {
   return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><View style={styles.listHeader}><View><Text style={styles.eyebrow}>YOUR LIBRARY</Text><Text style={styles.listTitle}>My Memories</Text></View><TouchableOpacity accessibilityRole="button" accessibilityLabel="Settings" onPress={onSettings} style={styles.settingsButton}><Text style={styles.settingsIcon}>⚙</Text></TouchableOpacity></View>
-    <View style={styles.compactSearch}><Text style={styles.searchIcon}>⌕</Text><TextInput style={styles.compactSearchInput} placeholder="Search memories" placeholderTextColor="#78828c" value={searchKeyword} onChangeText={onSearchChange} onSubmitEditing={onSearch} returnKeyType="search" /><TouchableOpacity accessibilityRole="button" onPress={onSearch} style={styles.compactSearchAction}><Text style={styles.compactSearchActionText}>Search</Text></TouchableOpacity></View>
+    <View style={styles.compactSearch}><Text style={styles.searchIcon}>⌕</Text><TextInput style={styles.compactSearchInput} placeholder="Search memories" placeholderTextColor="#9CA3AF" value={searchKeyword} onChangeText={onSearchChange} onSubmitEditing={onSearch} returnKeyType="search" /><TouchableOpacity accessibilityRole="button" onPress={onSearch} style={styles.compactSearchAction}><Text style={styles.compactSearchActionText}>Search</Text></TouchableOpacity></View>
     <View style={styles.listToolbar}><TouchableOpacity accessibilityRole="button" onPress={onToggleTags} style={styles.filterButton}><Text style={styles.filterButtonText}>☷  Filter{selectedTags.length ? ` (${selectedTags.length})` : ""}</Text></TouchableOpacity>{searchResults !== null && <TouchableOpacity accessibilityRole="button" onPress={onClearSearch}><Text style={styles.clearText}>Clear search</Text></TouchableOpacity>}</View>
-    {showTagChoices && <View style={styles.filterPanel}>{tagChoices.length ? <View style={styles.tagRow}>{tagChoices.map((tag) => <TouchableOpacity key={tag} style={selectedTags.includes(tag) ? styles.selectedTag : styles.tagChoice} onPress={() => onToggleTag(tag)}><Text style={selectedTags.includes(tag) ? styles.selectedTagText : styles.tagText}>{selectedTags.includes(tag) ? "✓ " : ""}{tag}</Text></TouchableOpacity>)}</View> : <Text style={styles.supportingText}>No tags available yet.</Text>}{selectedTags.length > 0 && <TouchableOpacity onPress={onClearTags}><Text style={styles.clearText}>Clear filters</Text></TouchableOpacity>}</View>}
+    <Modal visible={showTagChoices} transparent animationType="slide" onRequestClose={onToggleTags}><View style={styles.filterBackdrop}><View style={styles.filterSheet}><View style={styles.filterSheetHeader}><Text style={styles.filterSheetTitle}>Filter by category or tag</Text><TouchableOpacity onPress={onToggleTags}><Text style={styles.filterClose}>Done</Text></TouchableOpacity></View>{tagChoices.length ? <View style={styles.tagRow}>{tagChoices.map((tag) => <TouchableOpacity key={tag} style={selectedTags.includes(tag) ? styles.selectedTag : styles.tagChoice} onPress={() => onToggleTag(tag)}><Text style={selectedTags.includes(tag) ? styles.selectedTagText : styles.tagText}>{selectedTags.includes(tag) ? "✓ " : ""}{tag}</Text></TouchableOpacity>)}</View> : <Text style={styles.supportingText}>No tags available yet.</Text>}{selectedTags.length > 0 && <TouchableOpacity onPress={onClearTags}><Text style={styles.clearText}>Clear filters</Text></TouchableOpacity>}</View></View></Modal>
     {showAddMenu && <View style={styles.addMenu}><TouchableOpacity onPress={() => { onToggleAddMenu(); onOpenCreate(); }} style={styles.addMenuItem}><Text style={styles.addMenuText}>New Memory</Text></TouchableOpacity><TouchableOpacity onPress={() => { onToggleAddMenu(); onOpenCamera(); }} style={styles.addMenuItem}><Text style={styles.addMenuText}>Take Photo</Text></TouchableOpacity><TouchableOpacity onPress={() => { onToggleAddMenu(); onOpenLibrary(); }} style={styles.addMenuItem}><Text style={styles.addMenuText}>Choose Photo</Text></TouchableOpacity></View>}
-    {(loading || searchLoading) && <View style={styles.loadingState}><ActivityIndicator color="#27634a" /><Text style={styles.status}>{searchLoading ? "Searching…" : "Loading…"}</Text></View>}
+    {(loading || searchLoading) && <View style={styles.loadingState}><ActivityIndicator color={colors.primary} /><Text style={styles.status}>{searchLoading ? "Searching…" : "Loading…"}</Text></View>}
     {(loadError || searchError) && <View style={styles.errorCard}><Text style={styles.error}>{loadError || searchError}</Text><Button title="Try Again" onPress={onRetry} /></View>}
     {!loading && !loadError && <Text style={styles.resultCount}>{memories.length ? `${memories.length} ${memories.length === 1 ? "Memory" : "Memories"}` : "No Memories yet"}</Text>}
-    {!loading && !loadError && !memories.length ? <View style={styles.emptyState}><Text style={styles.emptyTitle}>{searchResults !== null || selectedTags.length > 0 ? "No Matches" : "Create Your First Memory"}</Text><Text style={styles.supportingText}>{searchResults !== null || selectedTags.length > 0 ? "Try another search or clear the filters." : "Tap + to add your first Memory."}</Text>{(searchResults !== null || selectedTags.length > 0) && <Button title="Clear All Filters" onPress={onClearFilters} />}</View> : <FlatList data={memories} contentContainerStyle={styles.listContent} keyExtractor={(item) => String(item.id)} renderItem={({ item }) => <TouchableOpacity style={styles.compactCard} onPress={() => onOpenMemory(item)} activeOpacity={0.72}><Text style={styles.compactCardTitle} numberOfLines={1}>{item.title}</Text><Text style={styles.compactCardMeta} numberOfLines={1}>{item.category || "Uncategorised"} · {memoryDate(item.event_date || item.created_at)}</Text><Text style={styles.compactCardContent} numberOfLines={2}>{item.confirmed_content || (item.source_image_path ? "Image draft — open to review" : item.original_text)}</Text><View style={styles.compactTags}>{displayTags(item.tags).slice(0, 3).map((tag) => <View key={tag} style={styles.compactTag}><Text style={styles.compactTagText} numberOfLines={1}>{tag}</Text></View>)}{displayTags(item.tags).length > 3 && <Text style={styles.moreTags}>+{displayTags(item.tags).length - 3}</Text>}</View></TouchableOpacity>} refreshing={loading} onRefresh={onRefresh} />}
+    {!loading && !loadError && !memories.length ? <View style={styles.emptyState}><Text style={styles.emptyTitle}>{searchResults !== null || selectedTags.length > 0 ? "No Matches" : "Create Your First Memory"}</Text><Text style={styles.supportingText}>{searchResults !== null || selectedTags.length > 0 ? "Try another search or clear the filters." : "Tap + to add your first Memory."}</Text>{(searchResults !== null || selectedTags.length > 0) && <Button title="Clear All Filters" onPress={onClearFilters} />}</View> : <FlatList data={memories} contentContainerStyle={styles.listContent} keyExtractor={(item) => String(item.id)} renderItem={({ item }) => <TouchableOpacity style={styles.compactCard} onPress={() => onOpenMemory(item)} activeOpacity={0.72}><View style={styles.compactCardRow}>{item.source_image_path && <View style={styles.compactThumbnailFrame}><Image style={styles.compactThumbnail} source={{ uri: memoryImageUrl(apiUrl, item.id, item.source_image_path!, "thumbnail") }} resizeMode="cover" /></View>}<View style={styles.compactCardBody}><Text style={styles.compactCardTitle} numberOfLines={1}>{item.title}</Text><Text style={styles.compactCardMeta} numberOfLines={1}>{item.category || "Uncategorised"} · {memoryDate(item.event_date || item.created_at)}</Text><Text style={styles.compactCardContent} numberOfLines={2}>{item.confirmed_content || (item.source_image_path ? "Image draft — open to review" : item.original_text)}</Text><View style={styles.compactTags}>{displayTags(item.tags).slice(0, 3).map((tag) => <View key={tag} style={styles.compactTag}><Text style={styles.compactTagText} numberOfLines={1}>{tag}</Text></View>)}{displayTags(item.tags).length > 3 && <Text style={styles.moreTags}>+{displayTags(item.tags).length - 3}</Text>}</View></View></View></TouchableOpacity>} refreshing={loading} onRefresh={onRefresh} />}
     <View style={styles.bottomNav}><TouchableOpacity accessibilityRole="button" style={styles.bottomNavItem}><Text style={styles.bottomNavIcon}>▦</Text><Text style={styles.bottomNavActive}>Memories</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" onPress={onAsk} style={styles.bottomNavItem}><Text style={styles.bottomNavIcon}>✦</Text><Text style={styles.bottomNavText}>Ask AI</Text></TouchableOpacity></View><TouchableOpacity accessibilityRole="button" accessibilityLabel="Add Memory" onPress={onToggleAddMenu} style={styles.fab}><Text style={styles.fabText}>＋</Text></TouchableOpacity>
   </SafeAreaView>;
 }
@@ -579,6 +581,11 @@ function MemoryDetailRedesign({ memory, apiUrl, onBack, onEdit, onDelete }: { me
   const [imageRetry, setImageRetry] = useState(0);
   const [imageSize, setImageSize] = useState({ width: 1, height: 1 });
   const [previewOpen, setPreviewOpen] = useState(false);
+  useEffect(() => {
+    setImageLoading(!!memory.source_image_path);
+    setImageError(false); setImageRetry(0); setPreviewOpen(false);
+    setImageSize({ width: 1, height: 1 });
+  }, [memory.id, memory.source_image_path]);
   let structured: Record<string, unknown> = {};
   if (memory.confirmed_vision) { try { structured = JSON.parse(memory.confirmed_vision); } catch { structured = {}; } }
   const fields = [["Event date", structured.date || memory.event_date], ["Due date", structured.due_date || memory.due_date], ["Location", structured.location_name || memory.location], ["Address", structured.location_address], ["Organisation", structured.institution], ["Amount", structured.amount ? `${structured.amount}${structured.currency ? ` ${structured.currency}` : ""}` : memory.amount ? `${memory.amount}${memory.currency ? ` ${memory.currency}` : ""}` : null]].filter(([, value]) => value);
@@ -586,7 +593,7 @@ function MemoryDetailRedesign({ memory, apiUrl, onBack, onEdit, onDelete }: { me
     <View style={styles.detailHeader}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Back" onPress={onBack} style={styles.backButton}><Text style={styles.backIcon}>‹</Text></TouchableOpacity><View style={styles.detailHeaderActions}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Edit Memory" onPress={onEdit} style={styles.pencilButton}><Text style={styles.pencilIcon}>✎</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel="More actions" onPress={() => setMenuOpen(!menuOpen)} style={styles.moreButton}><Text style={styles.moreIcon}>•••</Text></TouchableOpacity></View></View>
     {menuOpen && <View style={styles.overflowMenu}><TouchableOpacity accessibilityRole="button" onPress={() => { setMenuOpen(false); onDelete(); }}><Text style={styles.deleteMenuText}>Delete Memory</Text></TouchableOpacity></View>}
     <Text style={styles.detailTitle}>{memory.title}</Text><Text style={styles.detailMeta}>{memory.category || "Uncategorised"} · {memoryDate(memory.created_at)}</Text>
-    {memory.source_image_path && <View style={styles.detailImageSection}><Text style={styles.detailSectionTitle}>Original Image</Text>{imageError ? <View style={styles.imageLoadError}><Text style={styles.supportingText}>Unable to load image.</Text><Button title="Retry" onPress={() => { setImageError(false); setImageLoading(true); setImageRetry((value) => value + 1); }} compact /></View> : <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open image preview" activeOpacity={0.9} onPress={() => setPreviewOpen(true)} disabled={imageLoading}><View style={styles.detailImageFrame}>{imageLoading && <ActivityIndicator size="small" color="#27634a" />}<Image key={imageRetry} style={[styles.detailImage, { aspectRatio: imageSize.width / imageSize.height }]} source={{ uri: `${apiUrl}/memories/${memory.id}/image/file?retry=${imageRetry}` }} resizeMode="contain" onLoad={(event) => { const { width, height } = event.nativeEvent.source; setImageSize({ width, height }); setImageLoading(false); }} onError={() => { setImageLoading(false); setImageError(true); }} /></View></TouchableOpacity>}{!imageError && !imageLoading && <Text style={styles.imageHint}>Tap to view full screen</Text>}<Modal visible={previewOpen} animationType="fade" presentationStyle="fullScreen" onRequestClose={() => setPreviewOpen(false)}><View style={styles.imagePreview}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Close image preview" onPress={() => setPreviewOpen(false)} style={styles.imagePreviewClose}><Text style={styles.imagePreviewCloseText}>×</Text></TouchableOpacity><Image style={styles.imagePreviewImage} source={{ uri: `${apiUrl}/memories/${memory.id}/image/file?retry=${imageRetry}` }} resizeMode="contain" /></View></Modal></View>}
+    {memory.source_image_path && <View style={styles.detailImageSection}><Text style={styles.detailSectionTitle}>Original Image</Text>{imageError ? <View style={styles.imageLoadError}><Text style={styles.supportingText}>Unable to load image.</Text><Button title="Retry" onPress={() => { setImageError(false); setImageLoading(true); setImageRetry((value) => value + 1); }} compact /></View> : <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open image preview" activeOpacity={0.9} onPress={() => setPreviewOpen(true)} disabled={imageLoading}><View style={styles.detailImageFrame}>{imageLoading && <ActivityIndicator size="small" color="#27634a" />}<Image key={imageRetry} style={[styles.detailImage, { aspectRatio: imageSize.width / imageSize.height }]} source={{ uri: memoryImageUrl(apiUrl, memory.id, memory.source_image_path!, "preview", imageRetry) }} resizeMode="contain" onLoad={(event) => { const { width, height } = event.nativeEvent.source; setImageSize({ width, height }); setImageLoading(false); }} onError={() => { setImageLoading(false); setImageError(true); }} /></View></TouchableOpacity>}{!imageError && !imageLoading && <Text style={styles.imageHint}>Tap to view full screen</Text>}<Modal visible={previewOpen} animationType="fade" presentationStyle="fullScreen" onRequestClose={() => setPreviewOpen(false)}><View style={styles.imagePreview}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Close image preview" onPress={() => setPreviewOpen(false)} style={styles.imagePreviewClose}><Text style={styles.imagePreviewCloseText}>×</Text></TouchableOpacity>{previewOpen && <Image style={styles.imagePreviewImage} source={{ uri: memoryImageUrl(apiUrl, memory.id, memory.source_image_path!, "original", imageRetry) }} resizeMode="contain" />}</View></Modal></View>}
     <View style={styles.detailSection}><Text style={styles.detailSectionTitle}>Content</Text><MarkdownText value={memory.confirmed_content || memory.original_text} /></View>
     {!!fields.length && <View style={styles.detailSection}><Text style={styles.detailSectionTitle}>Important Information</Text>{fields.map(([label, value]) => <View key={String(label)} style={styles.structuredRow}><Text style={styles.structuredLabel}>{String(label)}</Text><Text style={styles.structuredValue}>{String(value)}</Text></View>)}</View>}
     {!!displayTags(memory.tags).length && <View style={styles.detailSection}><Text style={styles.detailSectionTitle}>Tags</Text><TagChips tags={memory.tags} /></View>}
@@ -630,143 +637,152 @@ function ReminderEditor({ selected, reminderDay, reminderTime, reminderTouched, 
 }
 
 function Form({ draft, setDraft, onSave, onCancel, editing, reminderSection }: { draft: Draft; setDraft: (draft: Draft) => void; onSave: () => void; onCancel: () => void; editing: boolean; reminderSection?: React.ReactNode }) {
-  const field = (key: keyof Draft, label: string, placeholder: string, multiline = false) => <View><Text style={styles.fieldLabel}>{label}</Text><TextInput style={[styles.input, multiline && styles.multiline]} placeholder={placeholder} placeholderTextColor="#78828c" value={draft[key]} onChangeText={(value) => setDraft({ ...draft, [key]: value })} multiline={multiline} /></View>;
+  const field = (key: keyof Draft, label: string, placeholder: string, multiline = false) => <View><Text style={styles.fieldLabel}>{label}</Text><TextInput style={[styles.input, multiline && styles.multiline]} placeholder={placeholder} placeholderTextColor="#9CA3AF" value={draft[key]} onChangeText={(value) => setDraft({ ...draft, [key]: value })} multiline={multiline} /></View>;
   const formTags = draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean);
   return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView contentContainerStyle={styles.scrollContent}><Text style={styles.eyebrow}>{editing ? "UPDATE MEMORY" : "ADD TO LIBRARY"}</Text><Text style={styles.title}>{editing ? "Edit Memory" : "New Memory"}</Text><View style={styles.formCard}>{field("title", "Title", "Enter a clear, recognisable title")}{field("original_text", "Content", "Record the important details from this document", true)}{field("category", "Category", "For example: bill, receipt, notice")}{field("tags", "Tags", "Separate multiple tags with commas")}<TagChips tags={formTags} /></View>{reminderSection}<View style={styles.formActions}><Button title="Save" onPress={onSave} /><Button title="Cancel" onPress={onCancel} /></View></ScrollView></SafeAreaView>;
 }
 
 const markdownStyles = {
-  body: { color: "#27322d", fontSize: 16, lineHeight: 25 },
-  heading1: { color: "#27634a", fontSize: 22, fontWeight: "700" as const, marginTop: 8, marginBottom: 8 },
-  heading2: { color: "#27634a", fontSize: 19, fontWeight: "700" as const, marginTop: 8, marginBottom: 6 },
-  strong: { fontWeight: "700" as const, color: "#17201c" },
+  body: { color: colors.text, fontSize: 16, lineHeight: 25 },
+  heading1: { color: colors.text, fontSize: 22, fontWeight: "700" as const, marginTop: 8, marginBottom: 8 },
+  heading2: { color: colors.text, fontSize: 19, fontWeight: "700" as const, marginTop: 8, marginBottom: 6 },
+  strong: { fontWeight: "700" as const, color: colors.text },
   bullet_list: { marginVertical: 4 },
   ordered_list: { marginVertical: 4 },
-  code_inline: { backgroundColor: "#edf2ef", color: "#315f49" },
+  code_inline: { backgroundColor: "#F3F1EE", color: colors.text },
   fence: { backgroundColor: "#edf2ef", borderRadius: 8, padding: 10 },
-  link: { color: "#2f7656" },
+  link: { color: colors.primary },
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, paddingHorizontal: 18, paddingTop: 16, backgroundColor: "#f5f7f6" },
+  container: { flex: 1, paddingHorizontal: 18, paddingTop: 16, backgroundColor: colors.background },
   scrollContent: { paddingBottom: 32 },
   detailContent: { paddingBottom: 40 },
   listHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 16 },
-  listTitle: { color: "#17201c", fontSize: 25, lineHeight: 31, fontWeight: "700" },
-  settingsButton: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: "#e7f1ec" },
-  settingsIcon: { color: "#315f49", fontSize: 20 },
-  compactSearch: { flexDirection: "row", alignItems: "center", backgroundColor: "#ffffff", borderRadius: 14, paddingHorizontal: 12, minHeight: 48, borderWidth: 1, borderColor: "#e1e6e3" },
-  searchIcon: { color: "#6f9f88", fontSize: 23, marginRight: 8 },
-  compactSearchInput: { flex: 1, minWidth: 0, color: "#17201c", fontSize: 16, paddingVertical: 8 },
+  listTitle: { color: colors.text, fontSize: 25, lineHeight: 31, fontWeight: "700" },
+  settingsButton: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: colors.backgroundAccent },
+  settingsIcon: { color: colors.primary, fontSize: 20 },
+  compactSearch: { flexDirection: "row", alignItems: "center", backgroundColor: colors.surfaceTranslucent, borderRadius: 14, paddingHorizontal: 12, minHeight: 48, borderWidth: 1, borderColor: colors.border },
+  searchIcon: { color: colors.secondaryText, fontSize: 23, marginRight: 8 },
+  compactSearchInput: { flex: 1, minWidth: 0, color: colors.text, fontSize: 16, paddingVertical: 8 },
   compactSearchAction: { paddingHorizontal: 8, paddingVertical: 6 },
-  compactSearchActionText: { color: "#315f49", fontSize: 13, fontWeight: "700" },
+  compactSearchActionText: { color: colors.primary, fontSize: 13, fontWeight: "700" },
+  filterBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(23,32,28,0.22)" },
+  filterSheet: { backgroundColor: "#ffffff", borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 18, paddingBottom: 30, minHeight: 190 },
+  filterSheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
+  filterSheetTitle: { color: "#17201c", fontSize: 17, fontWeight: "700" },
+  filterClose: { color: colors.primary, fontSize: 15, fontWeight: "800" },
   listToolbar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 46 },
-  filterButton: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: "#e7f1ec" },
-  filterButtonText: { color: "#315f49", fontSize: 13, fontWeight: "700" },
-  clearText: { color: "#527060", fontSize: 13, fontWeight: "600", paddingVertical: 8 },
+  filterButton: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: colors.primarySoft },
+  filterButtonText: { color: colors.primary, fontSize: 13, fontWeight: "700" },
+  clearText: { color: colors.primary, fontSize: 13, fontWeight: "600", paddingVertical: 8 },
   filterPanel: { backgroundColor: "#ffffff", borderRadius: 14, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: "#e1e6e3" },
   addMenu: { position: "absolute", zIndex: 10, right: 18, bottom: 84, backgroundColor: "#ffffff", borderRadius: 14, padding: 8, minWidth: 170, shadowColor: "#17201c", shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 5 },
   addMenuItem: { paddingHorizontal: 14, paddingVertical: 12 },
-  addMenuText: { color: "#315f49", fontSize: 15, fontWeight: "600" },
-  compactCard: { backgroundColor: "#ffffff", borderRadius: 15, padding: 14, marginBottom: 9, borderWidth: 1, borderColor: "#e6ece8" },
-  compactCardTitle: { color: "#17201c", fontSize: 17, lineHeight: 22, fontWeight: "700" },
-  compactCardMeta: { color: "#65716b", fontSize: 12, marginTop: 4 },
+  addMenuText: { color: colors.primary, fontSize: 15, fontWeight: "600" },
+  compactCard: { backgroundColor: colors.surfaceTranslucent, borderRadius: 15, padding: 14, marginBottom: 9, borderWidth: 1, borderColor: colors.border, shadowColor: colors.text, shadowOpacity: 0.04, shadowRadius: 7, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  compactCardRow: { flexDirection: "row", alignItems: "stretch", gap: spacing.md },
+  compactCardBody: { flex: 1, minWidth: 0 },
+  compactThumbnailFrame: { width: 88, minHeight: 88, flexGrow: 0, flexShrink: 0, alignSelf: "stretch", borderRadius: 12, overflow: "hidden", backgroundColor: colors.backgroundAccent },
+  compactThumbnail: { ...StyleSheet.absoluteFill, borderRadius: 12, backgroundColor: colors.backgroundAccent },
+  compactCardTitle: { color: colors.text, fontSize: 17, lineHeight: 22, fontWeight: "700" },
+  compactCardMeta: { color: colors.secondaryText, fontSize: 12, marginTop: 4 },
   compactCardContent: { color: "#4d5953", fontSize: 14, lineHeight: 20, marginTop: 8 },
   compactTags: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 10 },
-  compactTag: { maxWidth: 110, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, backgroundColor: "#edf5f0" },
-  compactTagText: { color: "#315f49", fontSize: 11, fontWeight: "600" },
-  moreTags: { color: "#65716b", fontSize: 12, fontWeight: "700" },
-  bottomNav: { flexDirection: "row", justifyContent: "space-around", alignItems: "center", minHeight: 60, borderTopWidth: 1, borderTopColor: "#e1e6e3", backgroundColor: "#f5f7f6", paddingBottom: 4 },
+  compactTag: { maxWidth: 110, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, backgroundColor: colors.backgroundAccent },
+  compactTagText: { color: "#216B8F", fontSize: 11, fontWeight: "600" },
+  moreTags: { color: colors.secondaryText, fontSize: 12, fontWeight: "700" },
+  bottomNav: { flexDirection: "row", justifyContent: "space-around", alignItems: "center", minHeight: 60, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.background, paddingBottom: 4 },
   bottomNavItem: { alignItems: "center", justifyContent: "center", minWidth: 90, paddingVertical: 5 },
-  bottomNavIcon: { color: "#527060", fontSize: 18 },
-  bottomNavActive: { color: "#27634a", fontSize: 12, fontWeight: "800" },
-  bottomNavText: { color: "#65716b", fontSize: 12, fontWeight: "600" },
-  fab: { position: "absolute", right: 18, bottom: 74, width: 56, height: 56, borderRadius: 28, backgroundColor: "#6f9f88", alignItems: "center", justifyContent: "center", shadowColor: "#17201c", shadowOpacity: 0.18, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 5 },
+  bottomNavIcon: { color: colors.secondaryText, fontSize: 18 },
+  bottomNavActive: { color: colors.primary, fontSize: 12, fontWeight: "800" },
+  bottomNavText: { color: colors.secondaryText, fontSize: 12, fontWeight: "600" },
+  fab: { position: "absolute", right: 18, bottom: 74, width: 56, height: 56, borderRadius: 28, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center", shadowColor: colors.text, shadowOpacity: 0.18, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 5 },
   fabText: { color: "#ffffff", fontSize: 30, lineHeight: 32, fontWeight: "300" },
   detailHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 44, marginBottom: 18 },
   detailHeaderActions: { flexDirection: "row", alignItems: "center", gap: 8 },
-  pencilButton: { width: 40, height: 40, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "#e7f1ec" },
-  pencilIcon: { color: "#315f49", fontSize: 22, lineHeight: 24 },
+  pencilButton: { width: 40, height: 40, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: colors.primarySoft },
+  pencilIcon: { color: colors.primary, fontSize: 22, lineHeight: 24 },
   backButton: { flexDirection: "row", alignItems: "center", paddingVertical: 6, paddingRight: 10 },
-  backIcon: { color: "#27634a", fontSize: 34, lineHeight: 30, fontWeight: "300" },
-  backLabel: { color: "#27634a", fontSize: 15, fontWeight: "600" },
+  backIcon: { color: colors.primary, fontSize: 34, lineHeight: 30, fontWeight: "300" },
+  backLabel: { color: colors.primary, fontSize: 15, fontWeight: "600" },
   moreButton: { width: 42, height: 40, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#c4d5cc" },
-  moreIcon: { color: "#315f49", fontSize: 16, letterSpacing: 2, fontWeight: "800" },
+  moreIcon: { color: colors.primary, fontSize: 16, letterSpacing: 2, fontWeight: "800" },
   overflowMenu: { alignSelf: "flex-end", backgroundColor: "#ffffff", borderRadius: 12, padding: 12, marginTop: -10, marginBottom: 8, shadowColor: "#17201c", shadowOpacity: 0.12, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
   deleteMenuText: { color: "#a3202d", fontWeight: "700", paddingHorizontal: 8, paddingVertical: 5 },
-  detailTitle: { color: "#17201c", fontSize: 25, lineHeight: 32, fontWeight: "700", marginBottom: 6 },
-  detailMeta: { color: "#65716b", fontSize: 14, marginBottom: 18 },
+  detailTitle: { color: colors.text, fontSize: 25, lineHeight: 32, fontWeight: "700", marginBottom: 6 },
+  detailMeta: { color: colors.secondaryText, fontSize: 14, marginBottom: 18 },
   detailImageSection: { marginBottom: 18 },
   detailImageFrame: { width: "100%", maxHeight: 360, minHeight: 120, borderRadius: 14, backgroundColor: "#edf0ee", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   detailImage: { width: "100%", maxHeight: 360, borderRadius: 14, backgroundColor: "#edf0ee" },
   imageLoadError: { minHeight: 100, borderRadius: 14, backgroundColor: "#edf0ee", alignItems: "center", justifyContent: "center", gap: 8 },
-  imageHint: { color: "#65716b", fontSize: 12, textAlign: "center", marginTop: 6 },
+  imageHint: { color: colors.secondaryText, fontSize: 12, textAlign: "center", marginTop: 6 },
   imagePreview: { flex: 1, backgroundColor: "#111", alignItems: "center", justifyContent: "center" },
   imagePreviewImage: { width: "100%", height: "100%" },
   imagePreviewClose: { position: "absolute", zIndex: 2, top: 48, right: 18, width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.2)", alignItems: "center", justifyContent: "center" },
   imagePreviewCloseText: { color: "#fff", fontSize: 30, lineHeight: 34, fontWeight: "300" },
   imagePlaceholder: { height: 88, borderRadius: 14, backgroundColor: "#e9f1ec", alignItems: "center", justifyContent: "center" },
-  imagePlaceholderText: { color: "#527060", fontSize: 14, fontWeight: "600" },
+  imagePlaceholderText: { color: colors.secondaryText, fontSize: 14, fontWeight: "600" },
   detailImageActions: { flexDirection: "row", gap: 8, marginTop: 8 },
   detailSection: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: "#e1e6e3" },
-  detailSectionTitle: { color: "#27634a", fontSize: 12, fontWeight: "800", letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 8 },
+  detailSectionTitle: { color: colors.primary, fontSize: 12, fontWeight: "800", letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 8 },
   structuredRow: { flexDirection: "row", justifyContent: "space-between", gap: 12, paddingVertical: 6 },
-  structuredLabel: { color: "#65716b", fontSize: 14, flex: 1 },
+  structuredLabel: { color: colors.secondaryText, fontSize: 14, flex: 1 },
   structuredValue: { color: "#27322d", fontSize: 15, fontWeight: "600", flex: 1.4, textAlign: "right" },
   reminderSummary: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 16 },
   reminderSummaryText: { color: "#4d5953", fontSize: 15 },
-  chevron: { color: "#6f9f88", fontSize: 28, fontWeight: "300" },
-  eyebrow: { color: "#27634a", fontSize: 12, fontWeight: "700", letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 4 },
+  chevron: { color: colors.primary, fontSize: 28, fontWeight: "300" },
+  eyebrow: { color: colors.primary, fontSize: 12, fontWeight: "700", letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 4 },
   title: { color: "#17201c", fontSize: 29, lineHeight: 37, fontWeight: "700", marginBottom: 14 },
-  titleDate: { color: "#65716b", fontSize: 15, fontWeight: "600" },
-  sectionTitle: { color: "#27634a", fontSize: 13, fontWeight: "800", letterSpacing: 0.7, textTransform: "uppercase", marginBottom: 10 },
+  titleDate: { color: colors.secondaryText, fontSize: 15, fontWeight: "600" },
+  sectionTitle: { color: colors.primary, fontSize: 13, fontWeight: "800", letterSpacing: 0.7, textTransform: "uppercase", marginBottom: 10 },
   tagFilter: { gap: 8, marginTop: 8 },
   tagRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 7, marginBottom: 12 },
   compactTagRow: { marginTop: 12, marginBottom: 0 },
   tagChip: { maxWidth: "100%", borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: "#e7f1ec", borderWidth: 1, borderColor: "#c9ded3" },
   tagChoice: { maxWidth: "100%", borderWidth: 1, borderColor: "#cbd3cf", backgroundColor: "#ffffff", borderRadius: 16, paddingHorizontal: 12, paddingVertical: 7 },
-  selectedTag: { maxWidth: "100%", borderWidth: 1, borderColor: "#4e8068", backgroundColor: "#dcece4", borderRadius: 16, paddingHorizontal: 12, paddingVertical: 7 },
-  tagText: { color: "#315c48", fontSize: 13, flexShrink: 1 },
-  selectedTagText: { color: "#1f513a", fontSize: 13, fontWeight: "600", flexShrink: 1 },
+  selectedTag: { maxWidth: "100%", borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.primarySoft, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 7 },
+  tagText: { color: colors.secondaryText, fontSize: 13, flexShrink: 1 },
+  selectedTagText: { color: colors.primary, fontSize: 13, fontWeight: "600", flexShrink: 1 },
   searchPanel: { backgroundColor: "#ffffff", borderRadius: 16, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: "#e1e6e3" },
   searchRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   searchInput: { flex: 1, minWidth: 0, borderWidth: 1, borderColor: "#cbd3cf", backgroundColor: "#fbfcfb", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16, color: "#17201c" },
   button: { minHeight: 44, justifyContent: "center", alignItems: "center", backgroundColor: "#ffffff", borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10, marginVertical: 3, borderWidth: 1, borderColor: "#c4d5cc" },
   singleLineButton: { width: "100%", paddingHorizontal: 6 },
-  buttonText: { color: "#315f49", fontSize: 14, lineHeight: 19, fontWeight: "700", textAlign: "center" },
-  primaryButton: { backgroundColor: "#dcece4", borderColor: "#a9cbb9", shadowColor: "#315f49", shadowOpacity: 0.08, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 1 , alignSelf: "flex-start",flexShrink: 0},
-  primaryButtonText: { color: "#234d39", fontSize: 12 },
+  buttonText: { color: colors.primary, fontSize: 14, lineHeight: 19, fontWeight: "700", textAlign: "center" },
+  primaryButton: { backgroundColor: colors.primary, borderColor: colors.primary, shadowColor: colors.text, shadowOpacity: 0.08, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 1 , alignSelf: "flex-start",flexShrink: 0},
+  primaryButtonText: { color: "#ffffff", fontSize: 12 },
   compactButton: { alignSelf: "center", minWidth: 176, paddingHorizontal: 22 },
   destructiveButton: { backgroundColor: "#fff4f4", borderColor: "#c7434f" },
   destructiveButtonText: { color: "#a3202d" },
   disabledButton: { backgroundColor: "#dfe5e2", borderColor: "#d2d9d5", opacity: 0.72 },
-  disabledButtonText: { color: "#77827c" },
+  disabledButtonText: { color: "#9CA3AF" },
   actionPanel: { alignItems: "stretch", gap: 10, marginBottom: 12, paddingVertical: 2 },
   actionRow: { flexDirection: "row", gap: 8 },
   topActionRow: { flexDirection: "row", alignItems: "stretch", gap: 8 },
   actionItem: { flex: 1, flexBasis: 0, minWidth: 0 },
   headerActions: { flexDirection: "row", alignSelf: "center", width: "82%", gap: 10, marginTop: 2, marginBottom: 8 },
   loadingState: { alignItems: "center", paddingVertical: 18 },
-  status: { color: "#65716b", lineHeight: 20, marginVertical: 8 },
-  resultCount: { color: "#65716b", fontSize: 13, fontWeight: "600", marginVertical: 8 },
+  status: { color: colors.secondaryText, lineHeight: 20, marginVertical: 8 },
+  resultCount: { color: colors.secondaryText, fontSize: 13, fontWeight: "600", marginVertical: 8 },
   error: { color: "#9f2430", lineHeight: 20 },
-  success: { color: "#245b3f", lineHeight: 20, fontWeight: "700" },
+  success: { color: colors.primary, lineHeight: 20, fontWeight: "700" },
   errorCard: { backgroundColor: "#fff1f2", borderColor: "#f0c4c9", borderWidth: 1, borderRadius: 12, padding: 12, gap: 8, marginVertical: 8 },
   emptyState: { backgroundColor: "#ffffff", alignItems: "center", borderRadius: 16, borderWidth: 1, borderColor: "#e1e6e3", padding: 24, gap: 8 },
   emptyTitle: { color: "#26332d", fontSize: 18, fontWeight: "700" },
-  supportingText: { color: "#65716b", lineHeight: 20 },
+  supportingText: { color: colors.secondaryText, lineHeight: 20 },
   listContent: { paddingBottom: 28 },
   card: { padding: 16, backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#e1e6e3", borderRadius: 16, marginBottom: 10, shadowColor: "#18231e", shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
   cardHeader: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
   cardTitle: { color: "#17201c", flex: 1, fontSize: 18, lineHeight: 23, fontWeight: "700" },
-  cardDate: { color: "#718078", fontSize: 12, fontWeight: "600" },
-  cardMeta: { color: "#527060", fontSize: 13, fontWeight: "600", marginTop: 5 },
+  cardDate: { color: colors.secondaryText, fontSize: 12, fontWeight: "600" },
+  cardMeta: { color: colors.primary, fontSize: 13, fontWeight: "600", marginTop: 5 },
   cardContent: { color: "#4d5953", fontSize: 15, lineHeight: 22, marginTop: 8 },
   draftBadge: { color: "#7a5200", backgroundColor: "#fff2ce", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, fontSize: 12, fontWeight: "700" },
-  meta: { color: "#65716b", marginBottom: 10 },
+  meta: { color: colors.secondaryText, marginBottom: 10 },
   contentCard: { backgroundColor: "#ffffff", borderRadius: 16, padding: 16, marginVertical: 12, borderWidth: 1, borderColor: "#e1e6e3" },
   content: { color: "#27322d", fontSize: 16, lineHeight: 25, marginBottom: 10 },
-  selectedTime: { fontSize: 15, color: "#245b3f", marginVertical: 5 },
+  selectedTime: { fontSize: 15, color: colors.primary, marginVertical: 5 },
   imageCard: { borderWidth: 1, borderColor: "#c9ded3", backgroundColor: "#f9fcfa", borderRadius: 16, padding: 15, marginVertical: 12, gap: 9 },
   imageActions: { gap: 8 },
   imageButtonRow: { flexDirection: "row", alignItems: "stretch", gap: 10 },
@@ -774,7 +790,7 @@ const styles = StyleSheet.create({
   sourceImage: { width: "100%", height: 260, marginVertical: 10, borderRadius: 12, backgroundColor: "#edf0ee" },
   aiCard: { borderWidth: 1, borderColor: "#ead49c", backgroundColor: "#fffcf4", borderRadius: 16, padding: 15, marginVertical: 12, gap: 9 },
   aiTitle: { color: "#26332d", fontSize: 18, fontWeight: "700" },
-  aiLabel: { color: "#27634a", fontSize: 13, fontWeight: "800", letterSpacing: 0.35, marginBottom: 6 },
+  aiLabel: { color: colors.primary, fontSize: 13, fontWeight: "800", letterSpacing: 0.35, marginBottom: 6 },
   fieldValue: { color: "#26322c", fontSize: 16, lineHeight: 24, backgroundColor: "#ffffff", borderRadius: 10, padding: 12, marginBottom: 14, borderWidth: 1, borderColor: "#e1e6e3" },
   fieldLabel: { color: "#35413b", fontSize: 14, fontWeight: "700", marginBottom: 6 },
   fieldRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
@@ -785,12 +801,12 @@ const styles = StyleSheet.create({
   formActions: { gap: 8, marginTop: 14 },
   editReminderSection: { marginTop: 18, paddingTop: 16, borderTopWidth: 1, borderTopColor: "#e1e6e3" },
   editImageSection: { marginTop: 8, paddingTop: 16, borderTopWidth: 1, borderTopColor: "#e1e6e3" },
-  editSectionTitle: { color: "#27634a", fontSize: 14, fontWeight: "800", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 5 },
-  editSectionHint: { color: "#65716b", fontSize: 14, marginBottom: 8 },
+  editSectionTitle: { color: colors.primary, fontSize: 14, fontWeight: "800", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 5 },
+  editSectionHint: { color: colors.secondaryText, fontSize: 14, marginBottom: 8 },
   reminderControls: { flexDirection: "row", gap: 8, marginVertical: 4 },
   askButton: { width: "100%", marginTop: 4 },
   askLoading: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12 },
-  chatScreen: { flex: 1, backgroundColor: "#f5f7f6" },
+  chatScreen: { flex: 1, backgroundColor: colors.background },
   chatKeyboard: { flex: 1 },
   chatHeader: { minHeight: 54, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1, borderBottomColor: "#e1e6e3" },
   chatTitle: { color: "#17201c", fontSize: 17, fontWeight: "700" },
@@ -798,20 +814,20 @@ const styles = StyleSheet.create({
   chatWelcome: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 28 },
   chatWelcomeTitle: { color: "#26332d", fontSize: 20, fontWeight: "700", textAlign: "center", marginBottom: 6 },
   userBubble: { alignSelf: "flex-end", maxWidth: "82%", backgroundColor: "#dcece4", borderRadius: 18, borderBottomRightRadius: 5, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 14 },
-  userBubbleText: { color: "#234d39", fontSize: 15, lineHeight: 21 },
+  userBubbleText: { color: "#FFFFFF", fontSize: 15, lineHeight: 21 },
   assistantMessage: { alignSelf: "stretch", marginBottom: 18, paddingHorizontal: 2 },
   sourceList: { marginTop: 10, gap: 7 },
-  sourceHeading: { color: "#527060", fontSize: 12, fontWeight: "800", letterSpacing: 0.7, textTransform: "uppercase" },
-  sourceCard: { flexDirection: "row", alignItems: "center", backgroundColor: "#ffffff", borderRadius: 11, paddingHorizontal: 11, paddingVertical: 9, borderWidth: 1, borderColor: "#e1e6e3" },
-  sourceTitle: { color: "#315f49", flex: 1, fontSize: 13, fontWeight: "700" },
-  sourceDate: { color: "#65716b", fontSize: 11, marginHorizontal: 8 },
-  sourceChevron: { color: "#6f9f88", fontSize: 22 },
+  sourceHeading: { color: colors.secondaryText, fontSize: 12, fontWeight: "800", letterSpacing: 0.7, textTransform: "uppercase" },
+  sourceCard: { flexDirection: "row", alignItems: "center", backgroundColor: "#ffffff", borderRadius: 11, paddingHorizontal: 11, paddingVertical: 9, borderWidth: 1, borderColor: colors.border },
+  sourceTitle: { color: colors.primary, flex: 1, fontSize: 13, fontWeight: "700" },
+  sourceDate: { color: colors.secondaryText, fontSize: 11, marginHorizontal: 8 },
+  sourceChevron: { color: colors.primary, fontSize: 22 },
   chatLoading: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8 },
   chatError: { backgroundColor: "#fff1f2", borderRadius: 11, padding: 11, marginBottom: 10 },
   retryText: { color: "#a3202d", fontWeight: "700", marginTop: 6 },
   chatComposer: { flexDirection: "row", alignItems: "flex-end", gap: 8, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 8, backgroundColor: "#ffffff", borderTopWidth: 1, borderTopColor: "#e1e6e3" },
   chatInput: { flex: 1, maxHeight: 120, minHeight: 42, color: "#17201c", backgroundColor: "#f5f7f6", borderRadius: 20, paddingHorizontal: 15, paddingVertical: 10, fontSize: 15 },
-  sendButton: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: "#6f9f88" },
+  sendButton: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: colors.primary },
   sendIcon: { color: "#ffffff", fontSize: 22, fontWeight: "700" },
   disabledSendButton: { backgroundColor: "#cbd8d1" },
 });

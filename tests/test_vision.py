@@ -120,21 +120,43 @@ def test_api_confirmation_persistence_protection(monkeypatch, tmp_path):
     assert client.post(review_url+"/accept", json={"draft_id": "any", "draft": DRAFT}).status_code == 404
 
 
-def test_api_provider_failure_preserves_content(monkeypatch, tmp_path):
+@pytest.mark.parametrize("confirmation", ["finalize", "vision/accept"])
+def test_api_provider_failure_preserves_content(monkeypatch, tmp_path, confirmation):
     from fastapi.testclient import TestClient
     from app.main import app
     from app.routes import images
+    from app.database import SessionLocal
+    from app.models import Memory
     client = TestClient(app)
     monkeypatch.setattr(images, "UPLOAD_DIR", tmp_path)
     def fail(_): raise vision.VisionError("insufficient_quota")
     monkeypatch.setattr(vision, "analyze_text", fail)
     mid = client.post("/memories", json={"title": "failure", "original_text": "source", "confirmed_content": "saved"}).json()["id"]
     client.post(f"/memories/{mid}/image", files={"image": ("test.png", b"synthetic", "image/png")})
+    # Keep a valid pending draft while the next provider attempt fails.
+    with SessionLocal() as db:
+        memory = db.get(Memory, mid)
+        memory.vision_draft = json.dumps({"stage": "analysis", "draft_id": "retained", "draft": DRAFT,
+            "source_image_path": memory.source_image_path, "reviewed_text": "reviewed"})
+        db.commit()
+        pending = json.loads(memory.vision_draft)
+        pending["version"] = memory.updated_at.isoformat()
+        from sqlalchemy import update
+        db.execute(update(Memory).where(Memory.id == mid).values(
+            vision_draft=json.dumps(pending), updated_at=memory.updated_at))
+        db.commit()
+    before = client.get(f"/memories/{mid}").json()
     result = client.post(f"/memories/{mid}/image/analyze", json={"consent": True, "text_confirmed": True, "text": "reviewed", "request_id": "failed"}).json()
-    assert result["vision"] is None and result["metadata"]["error"] == "insufficient_quota"
+    assert result["vision"]["draft_id"] == "retained" and result["metadata"]["error"] == "insufficient_quota"
     detail = client.get(f"/memories/{mid}").json()
+    assert detail["updated_at"] == before["updated_at"]
     assert detail["original_text"] == "source" and detail["confirmed_content"] == "saved"
     assert (tmp_path / Path(detail["source_image_path"]).name).exists()
+    payload = {"draft_id": "retained", "draft": DRAFT}
+    if confirmation == "finalize":
+        payload.update(title="reviewed title", text="reviewed", source_image_path=detail["source_image_path"])
+    saved = client.post(f"/memories/{mid}/image/{confirmation}", json=payload)
+    assert saved.status_code == 200
     assert client.patch(f"/memories/{mid}", json={"title": "manual still works"}).status_code == 200
 
 
@@ -166,6 +188,7 @@ def test_analysis_request_contains_only_reviewed_text(monkeypatch):
             assert payload["input"] == [{"role": "user", "content": [{"type": "input_text", "text": "Edited 中文. Address explicitly: Test Road 1"}]}]
             assert "input_image" not in request.data.decode() and "data:image" not in request.data.decode()
             assert "GPS" in payload["instructions"] and "explicitly stated" in payload["instructions"]
+            assert vision.DOCUMENT_LANGUAGE_RULE in payload["instructions"]
             return io.BytesIO(json.dumps(response()).encode())
     monkeypatch.setattr(vision.urllib.request, "build_opener", lambda *_: Opener())
     result = vision.analyze_text("Edited 中文. Address explicitly: Test Road 1")
@@ -324,6 +347,7 @@ def test_combined_image_analysis_is_one_request(monkeypatch, tmp_path):
             assert timeout == 30 and payload["store"] is False
             assert payload["input"][0]["content"][0]["type"] == "input_image"
             assert payload["text"]["format"]["schema"]["required"]
+            assert vision.DOCUMENT_LANGUAGE_RULE in payload["instructions"]
             return io.BytesIO(json.dumps(response({**DRAFT, "recognized_text": "synthetic text"})).encode())
     monkeypatch.setattr(vision.urllib.request, "build_opener", lambda *_: Opener())
     result = vision.analyze_image(image)
