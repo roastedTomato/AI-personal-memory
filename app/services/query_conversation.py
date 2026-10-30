@@ -1,6 +1,8 @@
 """Durable, owner-scoped, single-use clarification; expiry is cleaned lazily."""
 import json
 import re
+from collections import OrderedDict
+from threading import RLock
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from sqlalchemy import delete
@@ -8,9 +10,13 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from ..query_plan import CalculateDistance, QueryPlan
 from ..models import PendingClarification
 from ..database import SessionLocal
+from ..config import APP_ENV
 from . import intent_classifier
 
 TTL_SECONDS = 900
+MAX_LOCAL_PENDING = 128
+_local_pending = OrderedDict()
+_local_lock = RLock()
 
 @dataclass
 class PendingQuery:
@@ -20,6 +26,19 @@ class PendingQuery:
 
 
 def save_pending(owner, conversation_id, request, plan, db=None):
+    if APP_ENV == 'local':
+        now = datetime.now(UTC)
+        with _local_lock:
+            for key in list(_local_pending):
+                if _local_pending[key].expires_at <= now:
+                    del _local_pending[key]
+            key = (owner, conversation_id)
+            _local_pending[key] = PendingQuery(dict(request), plan.model_copy(deep=True),
+                                               now + timedelta(seconds=TTL_SECONDS))
+            _local_pending.move_to_end(key)
+            while len(_local_pending) > MAX_LOCAL_PENDING:
+                _local_pending.popitem(last=False)
+        return
     if db is None:
         with SessionLocal() as session:
             return save_pending(owner, conversation_id, request, plan, session)
@@ -38,6 +57,10 @@ def save_pending(owner, conversation_id, request, plan, db=None):
 
 
 def take_pending(owner, conversation_id, db=None):
+    if APP_ENV == 'local':
+        with _local_lock:
+            pending = _local_pending.pop((owner, conversation_id), None)
+        return pending if pending and pending.expires_at > datetime.now(UTC) else None
     if db is None:
         with SessionLocal() as session:
             return take_pending(owner, conversation_id, session)

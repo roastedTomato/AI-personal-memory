@@ -13,6 +13,7 @@ from sqlalchemy import or_, update
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..config import APP_ENV
 from ..models import Memory
 from ..services import vision
 from ..services.categories import normalize_category
@@ -94,6 +95,9 @@ def run_stage(memory_id, payload, stage, db):
         # Hashes support deduplication without putting document text in metadata/logs.
         signature = hashlib.sha256((stage + memory.source_image_path + (payload.text if stage == "analysis" else "")).encode()).hexdigest()
         metadata = json.loads(memory.vision_metadata) if memory.vision_metadata else {}
+        previous_metadata = memory.vision_metadata
+        if metadata.get("status") == "processing" and time.time() - metadata.get("attempt_at", 0) < 60:
+            raise HTTPException(409, detail="vision_busy")
         if metadata.get("request_id") == payload.request_id:
             if metadata.get("signature") != signature: raise HTTPException(409, detail="request_id_conflict")
             return envelope(memory)
@@ -103,9 +107,17 @@ def run_stage(memory_id, payload, stage, db):
                     "status": "processing", "attempt_at": time.time(), "model": os.environ.get("OPENAI_VISION_MODEL", vision.DEFAULT_MODEL)}
         version, source_path, owner = memory.updated_at, memory.source_image_path, memory.user_id
         now = datetime.now(UTC)
+        lease_values = {}
+        if APP_ENV == "local":
+            # Compare-and-swap existing metadata rather than requiring new columns.
+            lease = json.dumps(metadata)
+            available = Memory.vision_metadata.is_(None) if previous_metadata is None else Memory.vision_metadata == previous_metadata
+        else:
+            available = or_(Memory.operation_token.is_(None), Memory.operation_expires_at < now)
+            lease_values = dict(operation_token=lease, operation_expires_at=now + timedelta(seconds=60))
         claim = db.execute(update(Memory).where(Memory.id == memory_id, Memory.user_id == owner,
-            Memory.updated_at == version, or_(Memory.operation_token.is_(None), Memory.operation_expires_at < now)
-        ).values(operation_token=lease, operation_expires_at=now + timedelta(seconds=60),
+            Memory.updated_at == version, available
+        ).values(**lease_values,
                  vision_metadata=json.dumps(metadata), updated_at=version).execution_options(synchronize_session=False))
         if claim.rowcount != 1:
             db.rollback()
@@ -152,17 +164,27 @@ def run_stage(memory_id, payload, stage, db):
         try:
             if claimed:
                 db.rollback()
-                db.execute(update(Memory).where(Memory.id == memory_id, Memory.operation_token == lease).values(
-                    operation_token=None, operation_expires_at=None, updated_at=Memory.updated_at))
+                if APP_ENV == "local":
+                    interrupted = json.loads(lease)
+                    interrupted.update(status="failed", error="interrupted")
+                    condition = Memory.vision_metadata == lease
+                    cleanup = dict(vision_metadata=json.dumps(interrupted))
+                else:
+                    condition = Memory.operation_token == lease
+                    cleanup = dict(operation_token=None, operation_expires_at=None)
+                db.execute(update(Memory).where(Memory.id == memory_id, Memory.user_id == owner,
+                    condition).values(**cleanup, updated_at=Memory.updated_at))
                 db.commit()
         finally:
             _gate.release()
 
 
 def persist_stage(db, memory, owner, lease, version, source_path, values):
+    condition = Memory.vision_metadata == lease if APP_ENV == "local" else Memory.operation_token == lease
+    release = {} if APP_ENV == "local" else dict(operation_token=None, operation_expires_at=None)
     result = db.execute(update(Memory).where(Memory.id == memory.id, Memory.user_id == owner,
-        Memory.operation_token == lease, Memory.updated_at == version, Memory.source_image_path == source_path
-    ).values(**values, operation_token=None, operation_expires_at=None).execution_options(synchronize_session=False))
+        condition, Memory.updated_at == version, Memory.source_image_path == source_path
+    ).values(**values, **release).execution_options(synchronize_session=False))
     if result.rowcount != 1:
         db.rollback()
         raise HTTPException(409, detail='stale_vision_draft')

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import UserDefinedType
 
 from .database import Base
+from .config import APP_ENV
 
 
 class EmbeddingVector(UserDefinedType):
@@ -50,8 +51,10 @@ class Memory(Base):
     vision_draft: Mapped[str | None] = mapped_column(Text, nullable=True)
     vision_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)
     confirmed_vision: Mapped[str | None] = mapped_column(Text, nullable=True)
-    operation_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    operation_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Local development must remain usable without applying cloud migrations.
+    if APP_ENV != "local":
+        operation_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+        operation_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Vector schema is managed by explicit migrations.
     embedding: Mapped[str | None] = mapped_column(EmbeddingVector(), nullable=True)
     embedding_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
