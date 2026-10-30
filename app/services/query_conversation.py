@@ -1,46 +1,54 @@
-"""One expiring pending clarification per owner/conversation; no chat transcript."""
+"""Durable, owner-scoped, single-use clarification; expiry is cleaned lazily."""
+import json
 import re
-from collections import OrderedDict
 from dataclasses import dataclass
-from datetime import date
-from threading import RLock
-from time import monotonic
-
+from datetime import UTC, date, datetime, timedelta
+from sqlalchemy import delete
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from ..query_plan import CalculateDistance, QueryPlan
+from ..models import PendingClarification
+from ..database import SessionLocal
 from . import intent_classifier
 
 TTL_SECONDS = 900
-MAX_PENDING = 128
-
 
 @dataclass
 class PendingQuery:
     request: dict
     plan: QueryPlan
-    expires_at: float
+    expires_at: datetime
 
 
-_pending: OrderedDict[tuple[str, str], PendingQuery] = OrderedDict()
-_lock = RLock()
+def save_pending(owner, conversation_id, request, plan, db=None):
+    if db is None:
+        with SessionLocal() as session:
+            return save_pending(owner, conversation_id, request, plan, session)
+    values = dict(user_id=owner, conversation_id=conversation_id,
+                  request_json=json.dumps(request), plan_json=plan.model_dump_json(),
+                  expires_at=datetime.now(UTC) + timedelta(seconds=TTL_SECONDS))
+    db.execute(delete(PendingClarification).where(PendingClarification.user_id == owner,
+               PendingClarification.expires_at <= datetime.now(UTC)))
+    if db.bind.dialect.name == 'postgresql':
+        statement = pg_insert(PendingClarification).values(**values)
+        db.execute(statement.on_conflict_do_update(index_elements=['user_id', 'conversation_id'],
+                   set_={k: v for k, v in values.items() if k not in {'user_id', 'conversation_id'}}))
+    else:
+        db.merge(PendingClarification(**values))
+    db.commit()
 
 
-def save_pending(owner: str, conversation_id: str, request: dict, plan: QueryPlan) -> None:
-    with _lock:
-        now = monotonic()
-        for key in list(_pending):
-            if _pending[key].expires_at <= now:
-                del _pending[key]
-        key = (owner, conversation_id)
-        _pending[key] = PendingQuery(dict(request), plan.model_copy(deep=True), now + TTL_SECONDS)
-        _pending.move_to_end(key)
-        while len(_pending) > MAX_PENDING:
-            _pending.popitem(last=False)
-
-
-def take_pending(owner: str, conversation_id: str) -> PendingQuery | None:
-    with _lock:
-        pending = _pending.pop((owner, conversation_id), None)
-    return pending if pending and pending.expires_at > monotonic() else None
+def take_pending(owner, conversation_id, db=None):
+    if db is None:
+        with SessionLocal() as session:
+            return take_pending(owner, conversation_id, session)
+    row = db.execute(delete(PendingClarification).where(
+        PendingClarification.user_id == owner, PendingClarification.conversation_id == conversation_id
+    ).returning(PendingClarification.request_json, PendingClarification.plan_json,
+                PendingClarification.expires_at)).first()
+    db.commit()
+    if row is None or row.expires_at.replace(tzinfo=UTC) <= datetime.now(UTC):
+        return None
+    return PendingQuery(json.loads(row.request_json), QueryPlan.model_validate_json(row.plan_json), row.expires_at)
 
 
 def new_question(text: str) -> tuple[bool, str]:

@@ -19,6 +19,10 @@ def test_tag_normalization_examples():
 
 
 def test_existing_tag_cleanup_only_changes_tag_data():
+    import pytest
+    from app.database import engine
+    if engine.dialect.name != "postgresql":
+        pytest.skip("PostgreSQL migration/data compatibility requires isolated PostgreSQL")
     from app.database import engine
     with engine.begin() as connection:
         result = connection.execute(text("INSERT INTO memories (user_id, title, original_text, confirmed_content, category, tags, source_type, confirmation_status, ai_status, confirmed_vision, reminder_at) VALUES ('local-dev-user', 'keep title', 'original', 'confirmed', 'kept-category', :tags, 'image', 'accepted', 'idle', :vision, TIMESTAMPTZ '2030-12-01 10:00:00+00') RETURNING id"), {"tags": json.dumps(["Handmade", "handmade", "December", "Wonders", "Wonder opportunity"]), "vision": json.dumps({"summary": "kept summary", "tags": ["Handmade", "handmade", "Weekly"]})})

@@ -5,12 +5,13 @@ from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, RedirectResponse
+from .. import config, storage
 from PIL import UnidentifiedImageError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..config import LOCAL_USER_ID
+from ..auth import current_user
 from ..database import get_db
 from ..models import Memory
 from ..schemas import ImageParseRequest, MemoryRead
@@ -28,7 +29,7 @@ DatabaseSession = Annotated[Session, Depends(get_db)]
 
 
 def owned(db: Session, memory_id: int) -> Memory:
-    memory = db.scalar(select(Memory).where(Memory.id == memory_id, Memory.user_id == LOCAL_USER_ID))
+    memory = db.scalar(select(Memory).where(Memory.id == memory_id, Memory.user_id == current_user()))
     if memory is None:
         raise HTTPException(status_code=404, detail="Memory not found")
     return memory
@@ -36,6 +37,8 @@ def owned(db: Session, memory_id: int) -> Memory:
 
 @router.post("/from-image", response_model=MemoryRead, status_code=status.HTTP_201_CREATED)
 def create_from_image(image: Annotated[UploadFile, File()], db: DatabaseSession) -> MemoryRead:
+    if config.STORAGE_BACKEND == "s3":
+        raise HTTPException(409, detail="Use presigned image uploads")
     if image.content_type not in ALLOWED_TYPES:
         raise HTTPException(status_code=415, detail="Unsupported image type")
     data = image.file.read(MAX_IMAGE_SIZE + 1)
@@ -44,7 +47,7 @@ def create_from_image(image: Annotated[UploadFile, File()], db: DatabaseSession)
     if not data:
         raise HTTPException(status_code=400, detail="Image is empty")
     title = Path(image.filename or "").stem.strip()[:200] or "图片记忆"
-    memory = Memory(user_id=LOCAL_USER_ID, title=title, original_text="", confirmed_content="",
+    memory = Memory(user_id=current_user(), title=title, original_text="", confirmed_content="",
                     category=None, tags="[]", source_type="image", confirmation_status="draft")
     db.add(memory)
     path = None
@@ -71,6 +74,8 @@ def create_from_image(image: Annotated[UploadFile, File()], db: DatabaseSession)
 @router.get("/{memory_id}/image/file")
 def image_file(memory_id: int, request: Request, db: DatabaseSession, variant: Literal["original", "thumbnail", "preview"] = "original", v: str | None = None):
     memory = owned(db, memory_id)
+    if memory.source_image_path and memory.source_image_path.startswith("s3://") and variant == "original":
+        return RedirectResponse(storage.presigned_read(memory.source_image_path), status_code=307, headers={"Cache-Control": "no-store"})
     path = managed_image(memory)
     stat = path.stat()
     etag = '"' + hashlib.sha256(f"{path.name}:{stat.st_mtime_ns}:{stat.st_size}:{variant}".encode()).hexdigest() + '"'
@@ -89,6 +94,8 @@ def image_file(memory_id: int, request: Request, db: DatabaseSession, variant: L
 @router.post("/{memory_id}/image", response_model=MemoryRead)
 def upload_image(memory_id: int, image: Annotated[UploadFile, File()], db: DatabaseSession) -> MemoryRead:
     memory = owned(db, memory_id)
+    if config.STORAGE_BACKEND == "s3":
+        raise HTTPException(409, detail="Use presigned image uploads")
     if image.content_type not in ALLOWED_TYPES:
         raise HTTPException(status_code=415, detail="Unsupported image type")
     data = image.file.read(MAX_IMAGE_SIZE + 1)
@@ -101,9 +108,6 @@ def upload_image(memory_id: int, image: Annotated[UploadFile, File()], db: Datab
     filename = f"{memory.id}-{uuid4().hex}{suffix}"
     path = UPLOAD_DIR / filename
     path.write_bytes(data)
-    if memory.source_image_path:
-        old = UPLOAD_DIR / Path(memory.source_image_path).name
-        if old.exists(): old.unlink()
     memory.source_image_path = f"uploads/{filename}"
     memory.source_image_filename = (image.filename or filename)[:255]
     memory.source_image_mime_type = image.content_type
@@ -137,8 +141,11 @@ def parse_image(memory_id: int, db: DatabaseSession, payload: ImageParseRequest 
 def delete_image(memory_id: int, db: DatabaseSession) -> None:
     memory = owned(db, memory_id)
     if memory.source_image_path:
-        path = UPLOAD_DIR / Path(memory.source_image_path).name
-        if path.exists(): path.unlink()
+        if memory.source_image_path.startswith("s3://"):
+            storage.delete_original(memory.source_image_path)
+        else:
+            path = managed_image_path(memory)
+            if path.exists(): path.unlink()
     memory.ocr_text = memory.ocr_status = memory.ocr_error = memory.ocr_duration_ms = None
     memory.vision_draft = None
     memory.image_text_draft = None
@@ -147,6 +154,8 @@ def delete_image(memory_id: int, db: DatabaseSession) -> None:
 
 
 def managed_image_path(memory: Memory) -> Path:
+    if config.STORAGE_BACKEND != "local":
+        raise HTTPException(400, detail="Local image unavailable in cloud mode")
     if not memory.source_image_path:
         raise HTTPException(status_code=400, detail="No image uploaded")
     relative = Path(memory.source_image_path)
@@ -158,6 +167,8 @@ def managed_image_path(memory: Memory) -> Path:
 
 
 def managed_image(memory: Memory) -> Path:
+    if memory.source_image_path and memory.source_image_path.startswith("s3://"):
+        return storage.materialize(memory.source_image_path)
     path = managed_image_path(memory)
     if not path.is_file():
         raise HTTPException(status_code=400, detail="Managed image unavailable")

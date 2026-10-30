@@ -21,7 +21,7 @@ The project currently runs locally with a React Native + Expo mobile app, a Fast
 
 The app now supports AI Q&A powered by RAG (Retrieval-Augmented Generation). Users can ask natural-language questions about saved and confirmed Memories, such as “Which event notices did I save last month?” or “Where is the Craftadian handmade market being held?”. The system retrieves relevant confirmed content and generates an answer grounded in the matching Memories.
 
-The current implementation is intentionally local and single-user. Its design principles are:
+Local mode retains the single development user; cloud preparation adds Cognito owner isolation. Its design principles are:
 
 - Retrieve only content that the current user is authorized to access
 - Prefer user-confirmed fields and text; never treat an AI draft as a fact
@@ -63,7 +63,7 @@ FastAPI / Python
        └── Optional AI: OpenAI (server-side only)
 ```
 
-The target cloud architecture is AWS RDS PostgreSQL, S3, Cognito, and Lambda + API Gateway. The codebase includes a Lambda/Mangum adapter, but cloud deployment and resource configuration are still planned work within M5.
+The target architecture is Expo → API Gateway → Lambda → Neon PostgreSQL + private S3, with Cognito access tokens. M5.1 prepares explicit migrations, owner isolation, presigned image transfers, synchronous AI deadlines and a Linux OCR container. No resources have been deployed. See [cloud configuration and API contract](docs/cloud-deployment.md).
 
 ## Project structure
 
@@ -100,7 +100,11 @@ export OPENAI_VISION_MODEL='gpt-5.6-luna'
 
 Never put `OPENAI_API_KEY` in `EXPO_PUBLIC_*`, mobile configuration, source files, or logs.
 
-### 3. Start the API
+### 3. Initialize the chosen database explicitly
+
+Startup never changes the schema. Set `MIGRATION_DATABASE_URL` securely to the chosen **direct** database, then run `python -m migrations --apply`. Existing personal databases remain untouched until you explicitly approve and run an upgrade.
+
+### 4. Start the API
 
 ```sh
 .venv/bin/uvicorn app.main:app --reload
@@ -108,7 +112,7 @@ Never put `OPENAI_API_KEY` in `EXPO_PUBLIC_*`, mobile configuration, source file
 
 The API is available at `http://127.0.0.1:8000`. The health check is `/health`, and the interactive API documentation is `/docs`.
 
-### 4. Start the Expo app
+### 5. Start the Expo app
 
 ```sh
 cd mobile
@@ -128,28 +132,13 @@ You can also use `npm run ios`, `npm run android`, or `npm run web`.
 
 ### Memory questions
 
-Open **Ask My Memories** on the list screen. Each request asks permission to send
-the question and up to five matching confirmed records to OpenAI. Sources open
-their current Memory details. Existing keyword search remains available.
-
-`POST /memories/query` accepts `question`, `consent`, `today` (the device's local
-date), optional `upcoming_only`, `event_from`, `event_to`, and `category`.
-Upcoming/future and 即将/未来/接下来 also enable the upcoming filter. Other natural
-language date expressions are not automatically interpreted. Dates come from
-`event_date`, or the valid, non-uncertain date in `confirmed_vision`; reminder dates
-are not event dates. Missing dates are excluded when filtering by event date.
-
-Retrieval restricts records to `LOCAL_USER_ID`, skips drafts and stale embeddings,
-applies date/category eligibility before vector ranking, and returns up to five
-matches with cosine similarity >= 0.25 (an initial, uncalibrated threshold).
-Only matching confirmed content is sent for answering. Failed generation returns
-the retrieved sources. Embedding failure returns an error with keyword search
-still available. `OPENAI_RAG_MODEL` controls the answering model.
-
-This remains a local single-user implementation: `LOCAL_USER_ID` is not authenticated
-identity. Do not expose it as a multi-user service before adding real authentication.
-Date eligibility currently scans this user's records in Python to handle legacy
-JSON dates; normalize dates and move that predicate into SQL before scaling up.
+Open **Ask My Memories** to query confirmed records with citations. The Intent
+Classifier plans structured filters, keyword/semantic matches, sorting and limits;
+the Query Router applies them within the authenticated owner's data. Legacy reviewed
+dates/locations remain supported. Drafts and stale embeddings are excluded; context
+is bounded and truncation is reported. Distance/currency/aggregate tools remain
+unsupported. Clarification state is stored in PostgreSQL with a 15-minute expiry.
+`OPENAI_RAG_MODEL` selects the answering model. Existing keyword search remains available.
 
 ```sh
 .venv/bin/pytest -q
@@ -193,3 +182,16 @@ V1 does not include recurring reminders, automatic email/SMS access, website scr
 ## License
 
 No open-source license has been declared. Public redistribution is not granted by default.
+
+## M5.1 validation limits
+
+Default tests use a disposable SQLite database, temporary uploads and mocked providers.
+PostgreSQL/pgvector migration tests require a separate local `memory_test_*` database
+via `TEST_DATABASE_URL`. Never point tests at personal data. Mobile notifications
+remain local. Cognito mobile sign-in/refresh UI is pending; cloud token and transfer
+helpers are prepared. Linux image, real JWT dependencies, cloud permissions/Budgets
+and two-user cloud acceptance still require validation; no cloud pass is claimed.
+
+Local verification: backend **206 passed, 5 skipped**; mobile **11 passed**;
+TypeScript typecheck and YAML syntax checks passed. Skips cover unavailable
+PostgreSQL migration/data tests, real JWT cryptography, and the optional OCR fixture.

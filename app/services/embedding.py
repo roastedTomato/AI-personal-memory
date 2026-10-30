@@ -1,3 +1,4 @@
+from ..deadline import remaining, read_bounded
 """Confirmed Memory text and bounded OpenAI embedding generation."""
 import hashlib
 import json
@@ -6,7 +7,6 @@ import os
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
-from importlib import import_module
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -27,8 +27,8 @@ def generate_embedding(value):
                          "input": value, "encoding_format": "float"}).encode(),
         headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
         method="POST")
-    with urllib.request.build_opener(NoRedirect).open(request, timeout=30) as response:
-        raw = response.read(256 * 1024 + 1)
+    with urllib.request.build_opener(NoRedirect).open(request, timeout=remaining()) as response:
+        raw = read_bounded(response, 256 * 1024 + 1)
         if len(raw) > 256 * 1024:
             raise ValueError("invalid_output")
         result = json.loads(raw)
@@ -92,7 +92,12 @@ def refresh_embedding(memory_id, user_id):
 
 def refresh_embedding_safely(memory):
     try:
-        return refresh_embedding(memory.id, memory.user_id)
+        memory_id, user_id = memory.id, memory.user_id
+        from sqlalchemy.orm import object_session
+        session = object_session(memory)
+        if session is not None:
+            session.rollback()
+        return refresh_embedding(memory_id, user_id)
     except (SQLAlchemyError, OSError, ValueError, TypeError, KeyError, IndexError, AttributeError):
         # Database failures must not turn a successful Memory save into an error.
         return "failed"
@@ -138,7 +143,9 @@ if __name__ == "__main__":
 
     if not os.getenv("OPENAI_API_KEY", "").strip():
         raise SystemExit("OPENAI_API_KEY is missing")
-    import_module("app.main")  # Initialize the schema before running the backfill.
+    from ..config import APP_ENV
+    if APP_ENV == "cloud":
+        raise SystemExit("Cloud embedding backfill requires an explicit owner-specific administrative workflow")
     with SessionLocal() as db:
         ids = list(db.scalars(select(Memory.id).where(Memory.user_id == LOCAL_USER_ID)))
     counts = {"completed": 0, "failed": 0, "skipped": 0}

@@ -1,0 +1,8 @@
+*
+!app/
+!app/**
+!requirements.txt
+!deployment/
+!deployment/Dockerfile
+**/__pycache__
+**/*.pyc

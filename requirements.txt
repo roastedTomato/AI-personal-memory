@@ -6,3 +6,6 @@ psycopg[binary]==3.3.6
 
 python-multipart==0.0.20
 Pillow==13.0.0
+
+boto3==1.40.76
+PyJWT[crypto]==2.10.1

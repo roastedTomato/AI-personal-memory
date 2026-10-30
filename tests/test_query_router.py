@@ -89,7 +89,9 @@ def store(monkeypatch):
             return 1 - sum(x * y for x, y in zip(a, b)) / (math.hypot(*a) * math.hypot(*b))
         connection.create_function('cosine_distance', 2, cosine_distance)
 
+    from app.models import PendingClarification
     Memory.__table__.create(engine)
+    PendingClarification.__table__.create(engine)
     with Session(engine) as db:
         def add(title='Memory', indexed=False, **values):
             fields = {'user_id': 'local-dev-user', 'title': title, 'original_text': 'unreviewed private original',
@@ -438,6 +440,7 @@ def regression_api(store, monkeypatch):
     from app.query_plan import QueryPlan
     from app.routes import query
     from app.services import query_conversation, vision
+    from app.models import PendingClarification
 
     calls = []
     configured = {'plan': None}
@@ -455,7 +458,8 @@ def regression_api(store, monkeypatch):
         return query.query_memories(query.MemoryQuestion(question=question, consent=True,
                                     today=date(2026, 10, 29), **values), store.db)
     yield SimpleNamespace(ask=ask, configured=configured, calls=calls)
-    query_conversation._pending.clear()
+    store.db.query(PendingClarification).delete()
+    store.db.commit()
 
 
 def test_regression_next_event_uses_legacy_date_before_limits(store, regression_api):
@@ -501,7 +505,8 @@ def test_regression_location_reply_resumes_original_without_llm_or_retrieval(sto
         questions=['What is your current location?'])
     first = regression_api.ask('Which upcoming event is closest to me?')
     assert first['status'] == 'needs_clarification' and len(regression_api.calls) == 1
-    pending = query_conversation._pending[('local-dev-user', first['conversation_id'])]
+    pending = query_conversation.take_pending('local-dev-user', first['conversation_id'], db=store.db)
+    query_conversation.save_pending('local-dev-user', first['conversation_id'], pending.request, pending.plan, db=store.db)
     resumed = query_conversation.resume_plan(pending, 'Hamilton')
     assert resumed.operations[-1].origin == 'Hamilton'
     assert resumed.status == 'requires_future_tools'
@@ -510,7 +515,7 @@ def test_regression_location_reply_resumes_original_without_llm_or_retrieval(sto
     assert second['status'] == 'requires_future_tools'
     assert 'nearest location' in second['answer'] and 'calculate_distance' not in second['answer']
     assert second['sources'] == [] and len(regression_api.calls) == 1
-    assert not query_conversation._pending
+    assert query_conversation.take_pending('local-dev-user', first['conversation_id'], db=store.db) is None
 
 
 def test_regression_new_question_replaces_pending_clarification(store, regression_api):
@@ -530,8 +535,13 @@ def test_regression_conversation_and_owner_isolation_and_expiry(monkeypatch):
     query_conversation.save_pending('owner-a', 'conversation-a', {}, pending_plan)
     assert query_conversation.take_pending('owner-b', 'conversation-a') is None
     assert query_conversation.take_pending('owner-a', 'conversation-b') is None
-    clock = query_conversation.monotonic()
-    monkeypatch.setattr(query_conversation, 'monotonic', lambda: clock + query_conversation.TTL_SECONDS + 1)
+    from app.database import SessionLocal
+    from app.models import PendingClarification
+    from datetime import timedelta
+    with SessionLocal() as db:
+        row = db.get(PendingClarification, ('owner-a', 'conversation-a'))
+        row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        db.commit()
     assert query_conversation.take_pending('owner-a', 'conversation-a') is None
 
 

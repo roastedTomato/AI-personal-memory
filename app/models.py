@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import Date, DateTime, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
@@ -50,7 +50,9 @@ class Memory(Base):
     vision_draft: Mapped[str | None] = mapped_column(Text, nullable=True)
     vision_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)
     confirmed_vision: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # The preparation Text column is converted during database initialization.
+    operation_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    operation_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Vector schema is managed by explicit migrations.
     embedding: Mapped[str | None] = mapped_column(EmbeddingVector(), nullable=True)
     embedding_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     embedding_dimensions: Mapped[int | None] = mapped_column(nullable=True)
@@ -59,5 +61,27 @@ class Memory(Base):
     embedding_error: Mapped[str | None] = mapped_column(String(100), nullable=True)
     embedding_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now(), onupdate=lambda: datetime.now(UTC))
 
+
+
+class PendingClarification(Base):
+    __tablename__ = "pending_clarifications"
+    user_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    request_json: Mapped[str] = mapped_column(Text)
+    plan_json: Mapped[str] = mapped_column(Text)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class ImageUpload(Base):
+    __tablename__ = "image_uploads"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(100), index=True)
+    memory_id: Mapped[int] = mapped_column(index=True)
+    object_key: Mapped[str] = mapped_column(String(500), unique=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    mime_type: Mapped[str] = mapped_column(String(100))
+    size: Mapped[int] = mapped_column()
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_path: Mapped[str | None] = mapped_column(String(500), nullable=True)

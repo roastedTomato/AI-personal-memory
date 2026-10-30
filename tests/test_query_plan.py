@@ -92,7 +92,7 @@ def test_classifier_uses_existing_client_and_validates(monkeypatch, value):
             {'content': [{'type': 'output_text', 'text': json.dumps(value)}]}]}, output_model)
     monkeypatch.setenv('OPENAI_RAG_MODEL', 'test-model')
     monkeypatch.setattr(vision, '_request', mock_request)
-    assert classifier.classify_question('A question', date(2026, 10, 29)).model_dump() == value
+    assert classifier.classify_question('Find category event', date(2026, 10, 29)).model_dump() == value
 
 
 @pytest.mark.parametrize('output', ['not json', json.dumps(plan(filt('secret', 'eq', 'x'))), '{}'])

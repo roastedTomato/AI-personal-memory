@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from ..config import LOCAL_USER_ID
+from ..auth import current_user
 from ..database import get_db
 from ..query_plan import Filter
 from ..services import (
@@ -33,7 +33,7 @@ ERROR_MESSAGES = {
     "authentication_failed": "OpenAI rejected the backend API key or permissions.",
     "insufficient_quota": "OpenAI API quota is unavailable.",
     "rate_limited": "OpenAI is rate limited. Please try again later.",
-    "timeout": "OpenAI did not respond within 30 seconds.",
+    "timeout": "The request timed out. No paid call was retried.",
     "network_error": "The backend could not connect to OpenAI.",
     "provider_error": "OpenAI rejected the request.",
     "invalid_output": "OpenAI returned a response in an invalid format.",
@@ -82,7 +82,7 @@ def query_memories(payload: MemoryQuestion, db: Annotated[Session, Depends(get_d
     conversation_id = str(payload.conversation_id or uuid4())
     original_payload = payload
     independent, question_text = query_conversation.new_question(payload.question)
-    pending = query_conversation.take_pending(LOCAL_USER_ID, conversation_id)
+    pending = query_conversation.take_pending(current_user(), conversation_id, db=db)
     restart = payload.new_question or independent
     if pending is not None and not restart:
         # Keep the original question, date anchor, and explicit filters. The latest
@@ -121,22 +121,28 @@ def query_memories(payload: MemoryQuestion, db: Annotated[Session, Depends(get_d
             operations.append(Filter(operation="filter", field="category", operator="eq", value=payload.category))
         routed = query_router.execute_query_plan(plan.model_copy(update={"operations": operations}), db)
         aggregated = result_aggregator.aggregate_results(routed)
+    except TimeoutError:
+        db.rollback()
+        return {**metadata, "status": "execution_failed", "error": "timeout", "answer": ERROR_MESSAGES["timeout"], "sources": []}
     except intent_classifier.IntentClassifierError as exc:
+        db.rollback()
         if pending:
-            query_conversation.save_pending(LOCAL_USER_ID, conversation_id, pending.request, pending.plan)
+            query_conversation.save_pending(current_user(), conversation_id, pending.request, pending.plan, db=db)
         code = exc.code if exc.code in ERROR_MESSAGES else "internal_error"
         return {**metadata, "status": "invalid_plan" if code == "invalid_plan" else "execution_failed",
                 "error": code, "answer": ERROR_MESSAGES[code], "sources": []}
     except (SQLAlchemyError, OSError, ValueError, TypeError, KeyError, IndexError, AttributeError, RuntimeError, vision.VisionError):
+        db.rollback()
         if pending:
-            query_conversation.save_pending(LOCAL_USER_ID, conversation_id, pending.request, pending.plan)
+            query_conversation.save_pending(current_user(), conversation_id, pending.request, pending.plan, db=db)
         # Boundary failure: never expose document data, provider output, or SQL.
         return {**metadata, "status": "execution_failed", "error": "internal_error",
                 "answer": "The backend could not prepare the Memory query.", "sources": []}
 
+    db.rollback()  # Release retrieval transaction before answer generation.
     retrieved = aggregated.result
     if retrieved.status == "needs_clarification":
-        query_conversation.save_pending(LOCAL_USER_ID, conversation_id, payload.model_dump(mode="json"), plan)
+        query_conversation.save_pending(current_user(), conversation_id, payload.model_dump(mode="json"), plan, db=db)
     metadata.update(
         truncated=aggregated.truncated, omitted_memory_ids=aggregated.omitted_memory_ids,
         context_memory_ids=aggregated.context_memory_ids, matched_count=len(retrieved.memories),

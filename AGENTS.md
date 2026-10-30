@@ -10,8 +10,8 @@ Production-oriented mobile app for storing bills, receipts, notices, and importa
 - Backend: Python, FastAPI
 - Database: PostgreSQL
 - Current runtime: local Expo app, FastAPI API, and PostgreSQL
-- Target cloud architecture: AWS; RDS PostgreSQL, S3, Cognito (provisional), Lambda + API Gateway
-- Search: PostgreSQL full-text search
+- Target cloud architecture: Lambda + API Gateway, Neon PostgreSQL, private S3, Cognito
+- Search: PostgreSQL ILIKE keywords, pgvector, Intent Classifier + Query Router + grounded RAG
 - Reminders: Expo local one-time notifications
 
 ## Current status
@@ -46,7 +46,7 @@ Production-oriented mobile app for storing bills, receipts, notices, and importa
 
 ## Out of scope for V1
 
-Natural-language search, RAG, recurring reminders, automatic email/SMS access, website scraping, multi-user sharing, complex offline sync, and professional legal, medical, or financial advice.
+Recurring reminders, automatic email/SMS access, website scraping, multi-user sharing, complex offline sync, and professional legal, medical, or financial advice.
 
 ## Working rules
 
@@ -69,3 +69,14 @@ Natural-language search, RAG, recurring reminders, automatic email/SMS access, w
 - Mobile unit tests: `node --test mobile/tests/*.test.mjs`
 
 AWS is not connected yet. Do not assume cloud resources exist, and do not provision billable resources without explicit approval.
+
+## M5.1 deployment preparation
+
+- App startup never performs DDL, data normalization or backfill. Use explicit numbered migrations with `MIGRATION_DATABASE_URL` (direct URL) and `python -m migrations --apply`; never target the personal DB without separate approval.
+- Cloud runtime requires Cognito/S3 and TLS Neon pooled URL + NullPool. Every Memory path is owner scoped; fixed development identity is local only.
+- Cloud originals use presigned POST → validation/promotion → signed read, preserving the 10 MiB upload cap. Pending objects cannot enter OCR/AI.
+- AI stays synchronous with one 25-second request budget and no paid-call retries. Release database transactions before provider calls; protect result publication with leases/version checks.
+- Tests always isolate DB/uploads and mock outbound providers. Optional `TEST_DATABASE_URL` must name a local disposable `memory_test_*` database.
+- Local personal DB/uploads were not migrated or copied. The updated schema must be explicitly applied before database-backed use.
+- Linux OCR image and minimal CloudFormation are prepared, not deployed. New dependency installation, real JWT cryptography, PostgreSQL migration validation, image build, mobile Cognito sign-in/refresh and cloud acceptance remain unverified/pending. See `docs/cloud-deployment.md`.
+- Local validation: 206 backend tests passed / 5 skipped; 11 mobile unit tests passed; typecheck and YAML syntax passed. Skipped PostgreSQL/JWT checks do not count as cloud acceptance.

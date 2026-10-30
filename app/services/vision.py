@@ -1,3 +1,4 @@
+from ..deadline import remaining, read_bounded
 """One bounded OpenAI request; no retries, tools, raw-response or content logging."""
 import base64
 import json
@@ -16,7 +17,7 @@ from .categories import CANONICAL_CATEGORIES, normalize_category
 from .tags import normalize_tags
 
 DEFAULT_MODEL = "gpt-5.6-luna"
-MAX_BYTES = 5 * 1024 * 1024
+MAX_BYTES = 10 * 1024 * 1024
 DOCUMENT_LANGUAGE_RULE = (
     "Write suggested_title, summary, tags, location_purpose and warnings in the document's predominant language. "
     "For an English document, write them in English only; do not translate into Chinese. "
@@ -153,8 +154,8 @@ def _request(payload: dict, output_model) -> dict:
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, *args, **kwargs): return None
         opener = urllib.request.build_opener(NoRedirect)
-        with opener.open(request, timeout=30) as response:
-            raw = response.read(128 * 1024 + 1)
+        with opener.open(request, timeout=remaining()) as response:
+            raw = read_bounded(response, 128 * 1024 + 1)
             if len(raw) > 128 * 1024: raise VisionError("invalid_output")
             result = parse_response(json.loads(raw), output_model)
         result["duration_ms"] = round((perf_counter() - started) * 1000)

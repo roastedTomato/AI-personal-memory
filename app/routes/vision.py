@@ -2,14 +2,14 @@ import hashlib
 import json
 import os
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import Annotated, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import text, update
+from sqlalchemy import or_, update
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -66,6 +66,17 @@ class ConfirmedImageUpdate(BaseModel):
     draft: vision.VisionDraft | None = None
 
 
+def version_string(value):
+    return (value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)).isoformat()
+
+
+def same_version(raw, value):
+    try:
+        return version_string(datetime.fromisoformat(raw)) == version_string(value)
+    except (ValueError, TypeError):
+        return False
+
+
 def envelope(memory):
     return {"memory_id": memory.id,
             "vision": json.loads(memory.vision_draft) if memory.vision_draft else None,
@@ -76,10 +87,9 @@ def envelope(memory):
 def run_stage(memory_id, payload, stage, db):
     memory = owned(db, memory_id)
     if not _gate.acquire(blocking=False): raise HTTPException(409, detail="vision_busy")
+    lease = uuid4().hex
+    claimed = False
     try:
-        if not db.scalar(text("SELECT pg_try_advisory_xact_lock(38380001)")):
-            raise HTTPException(409, detail="vision_busy")
-        db.refresh(memory, with_for_update=True)
         path = managed_image(memory)
         # Hashes support deduplication without putting document text in metadata/logs.
         signature = hashlib.sha256((stage + memory.source_image_path + (payload.text if stage == "analysis" else "")).encode()).hexdigest()
@@ -90,7 +100,19 @@ def run_stage(memory_id, payload, stage, db):
         if metadata.get("stage") == stage and time.time() - metadata.get("attempt_at", 0) < 15:
             raise HTTPException(429, detail="vision_cooldown")
         metadata = {"request_id": payload.request_id, "stage": stage, "signature": signature,
-                    "attempt_at": time.time(), "model": os.environ.get("OPENAI_VISION_MODEL", vision.DEFAULT_MODEL)}
+                    "status": "processing", "attempt_at": time.time(), "model": os.environ.get("OPENAI_VISION_MODEL", vision.DEFAULT_MODEL)}
+        version, source_path, owner = memory.updated_at, memory.source_image_path, memory.user_id
+        now = datetime.now(UTC)
+        claim = db.execute(update(Memory).where(Memory.id == memory_id, Memory.user_id == owner,
+            Memory.updated_at == version, or_(Memory.operation_token.is_(None), Memory.operation_expires_at < now)
+        ).values(operation_token=lease, operation_expires_at=now + timedelta(seconds=60),
+                 vision_metadata=json.dumps(metadata), updated_at=version).execution_options(synchronize_session=False))
+        if claim.rowcount != 1:
+            db.rollback()
+            raise HTTPException(409, detail="vision_busy")
+        db.expunge(memory)
+        db.commit()  # Persist lease, then return connection before OpenAI.
+        claimed = True
         started = time.perf_counter()
         try:
             result = vision.recognize_image(path) if stage == "recognition" else vision.analyze_image(path) if stage == "image_full" else vision.analyze_text(payload.text)
@@ -99,10 +121,8 @@ def run_stage(memory_id, payload, stage, db):
             # A failed provider attempt changes diagnostics, not the content version.
             # Set updated_at explicitly so SQLAlchemy's onupdate does not expire
             # an otherwise valid draft retained for manual review.
-            db.execute(update(Memory).where(Memory.id == memory.id).values(
-                vision_metadata=json.dumps(metadata), updated_at=memory.updated_at,
-            ))
-            db.commit()
+            memory.vision_metadata = json.dumps(metadata)
+            persist_stage(db, memory, owner, lease, version, source_path, {'vision_metadata': memory.vision_metadata, 'updated_at': version})
             return envelope(memory)
         metadata.update(status="generated", model=result["model"], usage=result["usage"], duration_ms=result["duration_ms"])
         memory.updated_at = datetime.now(UTC)
@@ -123,12 +143,30 @@ def run_stage(memory_id, payload, stage, db):
             fields["category"] = normalize_category(fields.get("category"))
             memory.vision_draft = json.dumps({"draft_id": uuid4().hex, "stage": "analysis", "origin_stage": stage, "draft": fields,
                                              "reviewed_text": recognized_text or "", "source_image_path": memory.source_image_path,
-                                             "version": memory.updated_at.isoformat()})
+                                             "version": version_string(memory.updated_at)})
         memory.vision_metadata = json.dumps(metadata)
-        db.commit()
+        values = {name: getattr(memory, name) for name in ('vision_metadata', 'updated_at', 'image_text_draft', 'vision_draft')}
+        persist_stage(db, memory, owner, lease, version, source_path, values)
         return envelope(memory)
     finally:
-        _gate.release()
+        try:
+            if claimed:
+                db.rollback()
+                db.execute(update(Memory).where(Memory.id == memory_id, Memory.operation_token == lease).values(
+                    operation_token=None, operation_expires_at=None, updated_at=Memory.updated_at))
+                db.commit()
+        finally:
+            _gate.release()
+
+
+def persist_stage(db, memory, owner, lease, version, source_path, values):
+    result = db.execute(update(Memory).where(Memory.id == memory.id, Memory.user_id == owner,
+        Memory.operation_token == lease, Memory.updated_at == version, Memory.source_image_path == source_path
+    ).values(**values, operation_token=None, operation_expires_at=None).execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, detail='stale_vision_draft')
+    db.commit()
 
 
 @router.post("/{memory_id}/image/recognize")
@@ -167,7 +205,7 @@ def finalize_image(memory_id: int, payload: ImageFinalizeRequest, db: DatabaseSe
         pending = json.loads(memory.vision_draft) if memory.vision_draft else {}
         if (pending.get("stage") != "analysis" or pending.get("draft_id") != payload.draft_id
                 or pending.get("source_image_path") != memory.source_image_path
-                or pending.get("version") != memory.updated_at.isoformat()):
+                or not same_version(pending.get("version"), memory.updated_at)):
             raise HTTPException(409, detail="stale_vision_draft")
         cleaned = payload.draft.model_copy(update={"tags": normalize_tags(payload.draft.tags, payload.draft.summary or payload.text, limit=4), "category": normalize_category(payload.draft.category)})
         memory.confirmed_vision = cleaned.model_dump_json()
@@ -235,7 +273,7 @@ def accept(memory_id: int, payload: VisionAccept, db: DatabaseSession):
     draft = json.loads(memory.vision_draft) if memory.vision_draft else {}
     if (draft.get("stage") != "analysis" or draft.get("draft_id") != payload.draft_id
             or draft.get("source_image_path") != memory.source_image_path
-            or draft.get("version") != memory.updated_at.isoformat()):
+            or not same_version(draft.get("version"), memory.updated_at)):
         raise HTTPException(409, detail="stale_vision_draft")
     value = payload.draft.model_copy(update={"tags": normalize_tags(payload.draft.tags, payload.draft.summary or memory.confirmed_content, limit=4), "category": normalize_category(payload.draft.category)})
     memory.confirmed_vision = value.model_dump_json()

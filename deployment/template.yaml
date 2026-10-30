@@ -1,0 +1,178 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AI Personal Memory test environment. No VPC, NAT, RDS or provisioned concurrency.
+Parameters:
+  ImageUri:
+    Type: String
+    Description: Existing ECR image URI pinned to sha256 digest (linux amd64)
+    AllowedPattern: '.+@sha256:[a-f0-9]{64}'
+  DatabaseSecretArn:
+    Type: String
+    Description: Existing Secrets Manager secret with pooled_url JSON field; no migration credentials
+  OpenAISecretArn:
+    Type: String
+    Description: Existing Secrets Manager secret with api_key JSON field
+Resources:
+  Originals:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireUnconfirmedUploads
+            Status: Enabled
+            Prefix: pending/
+            ExpirationInDays: 1
+          - Id: AbortIncompleteUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+  OriginalsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref Originals
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt Originals.Arn
+              - !Sub '${Originals.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    Properties:
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      UsernameAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+  AppClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows: [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      AccessTokenValidity: 15
+      TokenValidityUnits:
+        AccessToken: minutes
+  RuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RuntimeOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ['logs:CreateLogStream', 'logs:PutLogEvents']
+                Resource: !GetAtt ApiLogs.Arn
+              - Effect: Allow
+                Action: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject']
+                Resource:
+                  - !Sub '${Originals.Arn}/users/*'
+                  - !Sub '${Originals.Arn}/pending/*'
+  ApiLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-api'
+      RetentionInDays: 7
+  ApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-api'
+      PackageType: Image
+      Code:
+        ImageUri: !Ref ImageUri
+      Architectures: [x86_64]
+      Role: !GetAtt RuntimeRole.Arn
+      MemorySize: 2048
+      Timeout: 29
+      EphemeralStorage:
+        Size: 512
+      Environment:
+        Variables:
+          APP_ENV: cloud
+          AUTH_MODE: cognito
+          STORAGE_BACKEND: s3
+          S3_BUCKET: !Ref Originals
+          COGNITO_ISSUER: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}'
+          COGNITO_CLIENT_ID: !Ref AppClient
+          DATABASE_URL: !Sub '{{resolve:secretsmanager:${DatabaseSecretArn}:SecretString:pooled_url}}'
+          OPENAI_API_KEY: !Sub '{{resolve:secretsmanager:${OpenAISecretArn}:SecretString:api_key}}'
+          REQUEST_DEADLINE_SECONDS: '25'
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${AWS::StackName}-api'
+      ProtocolType: HTTP
+  Integration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ApiFunction.Arn
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 29000
+  Route:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: '$default'
+      Target: !Sub 'integrations/${Integration}'
+  Stage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: '$default'
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 5
+        ThrottlingRateLimit: 2
+  InvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ApiFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
+Outputs:
+  ApiUrl:
+    Value: !GetAtt HttpApi.ApiEndpoint
+  UserPoolId:
+    Value: !Ref UserPool
+  AppClientId:
+    Value: !Ref AppClient
+  OriginalsBucket:
+    Value: !Ref Originals

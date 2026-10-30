@@ -29,10 +29,10 @@ CONFIRMED_STATES = ('confirmed', 'accepted')
 
 
 def _owned(statement):
-    from ..config import LOCAL_USER_ID
+    from ..auth import current_user
     from ..models import Memory
 
-    return statement.where(Memory.user_id == LOCAL_USER_ID,
+    return statement.where(Memory.user_id == current_user(),
                            Memory.confirmation_status.in_(CONFIRMED_STATES))
 
 
@@ -187,6 +187,7 @@ def semantic_search(db: 'Session', statement: 'Select', operation: SemanticMatch
         return statement.where(false()), literal(0.0)
     # Existing client validates dimensions and finite vector components. Bind the
     # vector as a parameter; the operator and type are fixed application code.
+    db.rollback()  # Release read transaction before paid network I/O.
     vector = embedding.generate_embedding(operation.query.strip())
     distance = Memory.embedding.op('<=>', return_type=Float)(cast(literal(vector), EmbeddingVector()))
     score = literal(1.0) - distance

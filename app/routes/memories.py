@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from ..config import LOCAL_USER_ID
+from ..auth import current_user
 from ..database import get_db
 from ..models import Memory
 from ..schemas import MemoryCreate, MemoryRead, MemoryUpdate
@@ -25,7 +25,7 @@ def to_read(memory: Memory) -> MemoryRead:
 
 
 def owned_memory(db: Session, memory_id: int) -> Memory:
-    memory = db.scalar(select(Memory).where(Memory.id == memory_id, Memory.user_id == LOCAL_USER_ID))
+    memory = db.scalar(select(Memory).where(Memory.id == memory_id, Memory.user_id == current_user()))
     if memory is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Memory not found")
     return memory
@@ -34,7 +34,7 @@ def owned_memory(db: Session, memory_id: int) -> Memory:
 @router.post("", response_model=MemoryRead, status_code=status.HTTP_201_CREATED)
 def create_memory(payload: MemoryCreate, db: DatabaseSession) -> MemoryRead:
     values = payload.model_dump(exclude={"tags", "category"})
-    memory = Memory(user_id=LOCAL_USER_ID, category=normalize_category(payload.category), **values)
+    memory = Memory(user_id=current_user(), category=normalize_category(payload.category), **values)
     memory.tags = json.dumps(normalize_tags(payload.tags, payload.original_text + " " + payload.confirmed_content))
     db.add(memory)
     db.commit()
@@ -46,7 +46,7 @@ def create_memory(payload: MemoryCreate, db: DatabaseSession) -> MemoryRead:
 
 @router.get("", response_model=list[MemoryRead])
 def list_memories(db: DatabaseSession, q: Annotated[str | None, Query(min_length=1, max_length=100)] = None) -> list[MemoryRead]:
-    statement = select(Memory).where(Memory.user_id == LOCAL_USER_ID)
+    statement = select(Memory).where(Memory.user_id == current_user())
     if q:
         pattern = f"%{q.strip()}%"
         statement = statement.where(or_(Memory.title.ilike(pattern), Memory.original_text.ilike(pattern), Memory.confirmed_content.ilike(pattern), Memory.category.ilike(pattern), Memory.tags.ilike(pattern)))
@@ -81,7 +81,8 @@ def delete_memory(memory_id: int, db: DatabaseSession) -> None:
     memory = owned_memory(db, memory_id)
     staged = None
     image_path = None
-    if memory.source_image_path:
+    remote_image = memory.source_image_path if memory.source_image_path and memory.source_image_path.startswith("s3://") else None
+    if memory.source_image_path and not remote_image:
         # Import here because image routes already use to_read from this module.
         from .images import managed_image_path
         image_path = managed_image_path(memory)
@@ -96,6 +97,9 @@ def delete_memory(memory_id: int, db: DatabaseSession) -> None:
         if staged is not None and image_path is not None:
             staged.rename(image_path)
         raise
+    if remote_image:
+        from ..storage import delete_original
+        delete_original(remote_image)
     if staged is not None:
         staged.unlink()
 

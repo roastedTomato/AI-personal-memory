@@ -1,4 +1,5 @@
 """Offline OCR subprocess. Never log recognized text or stderr."""
+from ..deadline import remaining
 import os
 import shutil
 import subprocess
@@ -19,7 +20,7 @@ def recognize(path: Path) -> dict:
         process = subprocess.run(
             [binary, path.name, "stdout", "-l", languages, "--psm", "6"],
             cwd=path.resolve().parent, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=TIMEOUT_SECONDS, check=False, env={**os.environ, "OMP_THREAD_LIMIT": "1"},
+            timeout=remaining(TIMEOUT_SECONDS), check=False, env={**os.environ, "OMP_THREAD_LIMIT": "1"},
         )
         if process.returncode:
             result["error"] = "recognition_failed"

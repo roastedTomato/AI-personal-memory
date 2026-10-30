@@ -129,6 +129,8 @@ def execute_query_plan(plan: QueryPlan | dict, db: Session) -> QueryResult:
             return QueryResult(status='completed' if memories else 'no_matches', memories=memories,
                                retrieval_method=methods,
                                applied_operations=[op.model_dump() for op in filters + keywords + semantics + sorts + limits])
+    except TimeoutError:
+        raise
     except SQLAlchemyError:
         return _failure('database_error', methods)
     except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError, RuntimeError, vision.VisionError):

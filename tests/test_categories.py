@@ -19,6 +19,10 @@ def test_category_aliases_are_stable():
 
 
 def test_existing_category_cleanup_updates_category_json_only():
+    import pytest
+    from app.database import engine
+    if engine.dialect.name != "postgresql":
+        pytest.skip("PostgreSQL migration/data compatibility requires isolated PostgreSQL")
     from app.database import engine
     with engine.begin() as connection:
         result = connection.execute(text(
