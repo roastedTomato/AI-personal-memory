@@ -11,7 +11,8 @@
     "plugins": [
       "expo-asset",
       "@react-native-community/datetimepicker",
-      "expo-image-picker"
+      "expo-image-picker",
+      "expo-secure-store"
     ]
   }
 }
