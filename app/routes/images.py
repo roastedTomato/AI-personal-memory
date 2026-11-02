@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response, RedirectResponse
 from .. import config, storage
 from PIL import UnidentifiedImageError
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from ..auth import current_user
@@ -76,10 +76,11 @@ def image_file(memory_id: int, request: Request, db: DatabaseSession, variant: L
     memory = owned(db, memory_id)
     if memory.source_image_path and memory.source_image_path.startswith("s3://") and variant == "original":
         return RedirectResponse(storage.presigned_read(memory.source_image_path), status_code=307, headers={"Cache-Control": "no-store"})
+    source_version = Path(memory.source_image_path or "").name
     path = managed_image(memory)
     stat = path.stat()
-    etag = '"' + hashlib.sha256(f"{path.name}:{stat.st_mtime_ns}:{stat.st_size}:{variant}".encode()).hexdigest() + '"'
-    headers = {"ETag": etag, "Cache-Control": "private, max-age=86400" if v == path.name else "private, no-cache"}
+    etag = '"' + hashlib.sha256(f"{memory.source_image_path}:{memory.source_image_size or stat.st_size}:{variant}".encode()).hexdigest() + '"'
+    headers = {"ETag": etag, "Cache-Control": "private, max-age=86400, immutable" if v == source_version else "private, no-cache"}
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers=headers)
     if variant == "original":
@@ -167,6 +168,8 @@ def managed_image_path(memory: Memory) -> Path:
 
 
 def managed_image(memory: Memory) -> Path:
+    if not memory.source_image_path:
+        raise HTTPException(status_code=400, detail="No image uploaded")
     if memory.source_image_path and memory.source_image_path.startswith("s3://"):
         return storage.materialize(memory.source_image_path)
     path = managed_image_path(memory)
@@ -178,12 +181,25 @@ def managed_image(memory: Memory) -> Path:
 @router.post("/{memory_id}/image/ocr")
 def recognize_image(memory_id: int, db: DatabaseSession) -> dict[str, Any]:
     memory = owned(db, memory_id)
+    owner, source_path, version = memory.user_id, memory.source_image_path, memory.updated_at
+    db.expunge(memory)
+    db.commit()  # Release the database connection before S3 download and OCR.
     path = managed_image(memory)
     result = recognize(path)
-    memory.ocr_status = result["status"]
-    memory.ocr_text = result["text"]
-    memory.ocr_error = result["error"]
-    memory.ocr_duration_ms = result["duration_ms"]
+    saved = db.execute(update(Memory).where(
+        Memory.id == memory_id,
+        Memory.user_id == owner,
+        Memory.source_image_path == source_path,
+        Memory.updated_at == version,
+    ).values(
+        ocr_status=result["status"],
+        ocr_text=result["text"],
+        ocr_error=result["error"],
+        ocr_duration_ms=result["duration_ms"],
+    ).execution_options(synchronize_session=False))
+    if saved.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, detail="Image changed while OCR was running")
     db.commit()
     return {"memory_id": memory.id, **result,
             "warnings": ["OCR 结果未确认，可能有识别错误；请核对或手动输入。"]}

@@ -4,8 +4,18 @@ export class APIError extends Error {
   }
 }
 
+export function providerDiagnostic(metadata: any): string {
+  const diagnostics = metadata?.diagnostics;
+  const codes = new Set(["invalid_api_key", "insufficient_quota", "rate_limit_exceeded", "model_not_found", "invalid_json_schema", "invalid_request_error", "unsupported_parameter", "unsupported_value", "invalid_value", "context_length_exceeded", "permission_denied", "server_error"]);
+  const parts: string[] = [];
+  if (Number.isInteger(diagnostics?.http_status) && diagnostics.http_status >= 400 && diagnostics.http_status <= 599) parts.push(`HTTP ${diagnostics.http_status}`);
+  if (codes.has(diagnostics?.provider_code)) parts.push(diagnostics.provider_code);
+  return parts.length ? ` (${parts.join(", ")})` : "";
+}
+
 export function visionRequestError(error: unknown): string {
-  if (!(error instanceof APIError)) return "The phone could not reach the backend. Check the server, network, and API address.";
+  if (!(error instanceof APIError)) return error instanceof Error && error.message.startsWith("Request timed out")
+    ? error.message : "The phone could not reach the backend. Check the server, network, and API address.";
   const messages: Record<string, string> = {
     use_two_step_image_flow: "Refresh the app and use the recognize, confirm, then analyse flow.",
     request_id_conflict: "This request identifier was already used for other content. Try again.",
@@ -17,6 +27,7 @@ export function visionRequestError(error: unknown): string {
     "Memory not found": "This Memory is unavailable. Return to the list and refresh.",
     "No image uploaded": "Add an image before starting analysis.",
     "Managed image unavailable": "The attached image is unavailable. Add it again.",
+    "Local image unavailable in cloud mode": "This draft has no confirmed cloud photo. Add the photo again before analysing it.",
   };
   if (typeof error.detail === "string" && messages[error.detail]) return messages[error.detail];
   if (error.status === 422) return "The request or draft format is invalid. Check dates, currency, and amounts, and confirm both app components are current.";

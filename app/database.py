@@ -8,7 +8,13 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from .config import DATABASE_URL, APP_ENV
 from sqlalchemy.pool import NullPool
 
-engine = create_engine(DATABASE_URL, hide_parameters=True, pool_pre_ping=True, **(
+SQLALCHEMY_DATABASE_URL = DATABASE_URL
+for legacy_scheme in ("postgresql://", "postgres://"):
+    if SQLALCHEMY_DATABASE_URL.startswith(legacy_scheme):
+        SQLALCHEMY_DATABASE_URL = "postgresql+psycopg://" + SQLALCHEMY_DATABASE_URL[len(legacy_scheme):]
+        break
+
+engine = create_engine(SQLALCHEMY_DATABASE_URL, hide_parameters=True, pool_pre_ping=True, **(
     {"poolclass": NullPool, "connect_args": {"connect_timeout": 5}}
     if APP_ENV == "cloud" else {}))
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)

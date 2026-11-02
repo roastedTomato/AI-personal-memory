@@ -1,6 +1,6 @@
 import { MemoryImage as Image } from "./components/MemoryImage";
 import { uploadMemoryImage, createMemoryFromImage as createImageMemory } from "./api/images";
-import { imageAuthorizationHeaders } from "./api/auth";
+import { imageAuthorizationHeaders, readRefreshToken, refreshAccessToken, setAccessTokenProvider, signIn, signOut } from "./api/auth";
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
@@ -12,7 +12,7 @@ import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { memoryImageUrl } from "./imageUrl";
 import { colors, spacing } from "./styles/theme";
 import Markdown from "react-native-markdown-display";
-import { visionRequestError } from "./apiErrors";
+import { visionRequestError, providerDiagnostic } from "./apiErrors";
 import { availableTags, displayTags, filterByTags } from "./tagFilter";
 import { API_URL, request } from "./api/client";
 import { mapVisionEnvelope, visibleVisionFields, visionKeys, reminderSuggestion, suggestReminderIfUntouched, emptyVisionDraft, categoryFields, type VisionDraft, type VisionEnvelope, type VisionFieldKey } from "./visionDraft";
@@ -45,8 +45,8 @@ const reminderDateTime = (day: string | null, time: string | null): Date | null 
   return localDay(value) === day && localTime(value) === time ? value : null;
 };
 
-function uploadImage(memoryId: number, uri: string, name: string, type: string): Promise<Memory> {
-  return uploadMemoryImage(memoryId, { uri, name, type });
+function uploadImage(memoryId: number, uri: string, name: string, type: string, progress?: (message: string) => void): Promise<Memory> {
+  return uploadMemoryImage(memoryId, { uri, name, type }, progress);
 }
 
 async function uploadableImage(asset: ImagePicker.ImagePickerAsset): Promise<{ uri: string; name: string; type: string }> {
@@ -56,13 +56,20 @@ async function uploadableImage(asset: ImagePicker.ImagePickerAsset): Promise<{ u
     return { uri: asset.uri, name, type };
   }
   // iOS can return original HEIC images; convert only unsupported formats locally.
-  const rendered = await ImageManipulator.manipulate(asset.uri).renderAsync();
-  const converted = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: 0.85 });
-  return { uri: converted.uri, name: name.replace(/\.[^.]+$/, "") + ".jpg", type: "image/jpeg" };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([(async () => {
+      const rendered = await ImageManipulator.manipulate(asset.uri).renderAsync();
+      const converted = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: 0.85 });
+      return { uri: converted.uri, name: name.replace(/\.[^.]+$/, "") + ".jpg", type: "image/jpeg" };
+    })(), new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("Preparing the photo timed out. Choose a JPEG or PNG photo.")), 30000);
+    })]);
+  } finally { if (timer !== undefined) clearTimeout(timer); }
 }
 
-function createMemoryFromImage(uri: string, name: string, type: string): Promise<Memory> {
-  return createImageMemory({ uri, name, type });
+function createMemoryFromImage(uri: string, name: string, type: string, progress?: (message: string) => void): Promise<Memory> {
+  return createImageMemory({ uri, name, type }, progress);
 }
 
 function Button({ title, onPress, disabled = false, color, variant = "secondary", compact = false, nowrap = false }: { title: string; onPress: () => void; disabled?: boolean; color?: string; variant?: "primary" | "secondary"; compact?: boolean; nowrap?: boolean }) {
@@ -75,7 +82,7 @@ function MarkdownText({ value }: { value: string }) {
   return <Markdown style={markdownStyles}>{value}</Markdown>;
 }
 
-function AppContent() {
+function AppContent({ onSignOut }: { onSignOut?: () => Promise<void> } = {}) {
   const [screen, setScreenState] = useState<"list" | "form" | "detail" | "capture" | "ask">("list");
   const [detailReturnScreen, setDetailReturnScreen] = useState<"list" | "ask">("list");
   const setScreen = (next: "list" | "form" | "detail" | "capture" | "ask") => setScreenState(next === "list" && screen === "detail" && detailReturnScreen === "ask" ? "ask" : next);
@@ -150,6 +157,7 @@ function AppContent() {
   const [captureTitle, setCaptureTitle] = useState("");
   const titleTouched = useRef(false);
   const [captureBusy, setCaptureBusy] = useState(false);
+  const [captureProgress, setCaptureProgress] = useState("");
   const captureLock = useRef(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [manualContent, setManualContent] = useState("");
@@ -191,7 +199,7 @@ function AppContent() {
   const reviewVisionFields = (fields: VisionDraft) => { setVisionReview((current) => current ? { ...current, draft: fields } : null); updateReminderFromDraft(fields); };
   const openEdit = () => { if (!selected) return; setDraft({ title: selected.title, original_text: selected.original_text, category: selected.category || "", tags: selected.tags.join(", ") }); setEditContent(selected.confirmed_content); const fields = selected.confirmed_vision ? mapVisionEnvelope({ draft_id: "confirmed", draft: JSON.parse(selected.confirmed_vision) })?.draft ?? emptyVisionDraft() : { ...emptyVisionDraft(), summary: selected.confirmed_content || null, category: selected.category || null, tags: selected.tags }; setEditVision(fields); if (!selected.reminder_at && !reminderTouched && !reminderDrafts.current[selected.id]) { const suggestion = reminderSuggestion(fields); if (suggestion) { setReminderDay(suggestion.day); setReminderTime(suggestion.time); } } setScreen("form"); };
   const save = async () => { if (selected?.source_image_path) { if (!draft.title.trim()) return Alert.alert("Enter a title"); try { const value = await request(`/memories/${selected.id}/image/confirmed`, { method: "PATCH", body: JSON.stringify({ title: draft.title.trim(), confirmed_content: editVision?.summary ?? editContent, draft: editVision }) }); setSelected(value); await load(); setScreen("detail"); } catch (e) { Alert.alert("Save failed", visionRequestError(e)); } return; } if (!draft.title.trim() || !draft.original_text.trim()) return Alert.alert("Enter a title and content"); const payload = { title: draft.title.trim(), original_text: draft.original_text.trim(), confirmed_content: selected && draft.original_text.trim() === selected.original_text ? selected.confirmed_content : draft.original_text.trim(), category: draft.category.trim() || null, tags: draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean) }; try { const value = selected ? await request(`/memories/${selected.id}`, { method: "PATCH", body: JSON.stringify(payload) }) : await request("/memories", { method: "POST", body: JSON.stringify(payload) }); setSelected(value); await load(); setScreen("detail"); } catch (e) { Alert.alert("Save failed", String(e)); } };
-  const remove = () => { if (!selected) return; Alert.alert("Delete Memory", "Are you sure you want to delete this Memory?", [{ text: "Cancel" }, { text: "Delete", style: "destructive", onPress: async () => { try { await request(`/memories/${selected.id}`, { method: "DELETE" }); setSelected(null); setDetailReturnScreen("list"); await load(); setScreen("list"); } catch (e) { Alert.alert("Delete failed", String(e)); } } }]); };
+  const remove = () => { if (!selected) return; const failedImageDraft = selected.confirmation_status === "draft" && !selected.source_image_path; Alert.alert(failedImageDraft ? "Delete Draft" : "Delete Memory", failedImageDraft ? "Delete this incomplete image draft? This removes it from your Memories list." : "Are you sure you want to delete this Memory?", [{ text: "Cancel" }, { text: "Delete", style: "destructive", onPress: async () => { try { await request(`/memories/${selected.id}`, { method: "DELETE" }); setSelected(null); setDetailReturnScreen("list"); await load(); setScreen("list"); } catch (e) { Alert.alert("Delete failed", String(e)); } } }]); };
   const chooseImage = async () => {
     if (!selected) return;
     setImageError(null);
@@ -203,17 +211,18 @@ function AppContent() {
     Alert.alert("Process this image?", "Text is recognized on this device, then sent to OpenAI for analysis. The image is not sent during this first pass.", [
       { text: "Cancel", style: "cancel" },
       { text: "Agree and Process", onPress: async () => {
+    setScreenState("capture"); setCaptureError(null); setCaptureProgress("Preparing photo…");
     setImageLoading(true);
     try {
       const prepared = await uploadableImage(asset);
-      const value = await uploadImage(selected.id, prepared.uri, prepared.name, prepared.type);
+      const value = await uploadImage(selected.id, prepared.uri, prepared.name, prepared.type, setCaptureProgress);
       setSelected(value); setVisionReview(null); setVisionMessage(null); setShowImageDraft(true); setShowSavedImageText(false); setShowSavedOcrText(false); setShowSavedImage(false); setImageText(""); setConfirmedText(null); setTextWarnings([]); setOcrText(""); setOcrMessage(null);
       const ocr = await request(`/memories/${value.id}/image/ocr`, { method: "POST" });
       setOcrText(ocr.text || ""); setImageText(ocr.text || "");
       setSelected((current) => current?.id === value.id ? { ...current, ocr_text: ocr.text, ocr_status: ocr.status, ocr_duration_ms: ocr.duration_ms } : current);
       if (ocr.status === "completed" && ocr.text?.trim()) await analyzeCaptureText(value, ocr.text);
       else setCaptureError("Local OCR found no text. The image and existing content were preserved for manual editing.");
-    } catch (e) { console.error("image upload or parse failed", e); setImageError("Image upload or analysis failed. You can still save the Memory manually."); } finally { setImageLoading(false); }
+    } catch (e) { setImageError(e instanceof Error ? e.message : "Image upload or analysis failed. You can still save the Memory manually."); } finally { setImageLoading(false); setCaptureProgress(""); }
       } },
     ]);
   };
@@ -223,7 +232,7 @@ function AppContent() {
     try {
       const result = await request(`/memories/${memory.id}/image/analyze-draft`, { method: "POST", body: JSON.stringify({ consent: true, request_id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, text }) });
       if (result.metadata?.status === "failed") {
-        setCaptureError(`AI analysis failed: ${visionErrors[result.metadata.error] || result.metadata.error}. The image and OCR result were preserved for review.`);
+        setCaptureError(`AI analysis failed: ${visionErrors[result.metadata.error] || result.metadata.error}${providerDiagnostic(result.metadata)}. The image and OCR result were preserved for review.`);
       } else {
         const mapped = mapVisionEnvelope(result.vision);
         setVisionReview(mapped);
@@ -241,22 +250,24 @@ function AppContent() {
   const startImageMemory = async (asset: ImagePicker.ImagePickerAsset) => {
     if (captureLock.current) return;
     captureLock.current = true; setCaptureBusy(true); setCaptureError(null);
+    setSelected(null); setScreenState("capture"); setCaptureProgress("Preparing photo…");
     try {
       const prepared = await uploadableImage(asset);
-      const memory = await createMemoryFromImage(prepared.uri, prepared.name, prepared.type);
+      const memory = await createMemoryFromImage(prepared.uri, prepared.name, prepared.type, setCaptureProgress);
       setSelected(memory); setCaptureTitle(memory.title); titleTouched.current = false; setManualContent(""); setImageText(""); setOcrText(""); setVisionReview(null);
       setReminderDay(null); setReminderTime(null); setReminderTouched(false); setShowSavedImage(false);
-      setScreen("capture"); await load();
+      setScreen("capture");
+      setCaptureProgress("Reading text from photo…");
       try {
         const result = await request(`/memories/${memory.id}/image/ocr`, { method: "POST" });
         setOcrText(result.text || ""); setImageText(result.text || "");
         setSelected((current) => current?.id === memory.id ? { ...current, ocr_text: result.text, ocr_status: result.status, ocr_duration_ms: result.duration_ms } : current);
         if (result.status !== "completed" || !result.text?.trim()) {
           setCaptureError("Local OCR found no text. The image was preserved; enter content manually or analyse it again.");
-        } else await analyzeCaptureText(memory, result.text);
+        } else { setCaptureProgress("Analysing text…"); await analyzeCaptureText(memory, result.text); }
       } catch (error) { setCaptureError("Local OCR failed. The image was preserved for manual entry."); }
-    } catch (error) { Alert.alert("Unable to create image Memory", String(error)); }
-    finally { captureLock.current = false; setCaptureBusy(false); }
+    } catch (error) { setCaptureError(error instanceof Error ? error.message : "The image could not be uploaded."); }
+    finally { captureLock.current = false; setCaptureBusy(false); setCaptureProgress(""); }
   };
 
   const chooseNewImage = async (source: "camera" | "library") => {
@@ -278,12 +289,16 @@ function AppContent() {
 
   const reanalyzeImage = async () => {
     if (!selected || captureLock.current) return;
+    // The redesigned edit/detail pages do not render the capture result state.
+    // Show the review page before starting so progress, errors and drafts are visible.
+    setScreenState("capture");
+    if (!selected.source_image_path) { setCaptureError("This draft has no uploaded photo. Add a photo before analysing it."); return; }
     const memory = selected;
     captureLock.current = true; setCaptureBusy(true); setCaptureError(null); setVisionMessage(null);
     try {
       const result = await request(`/memories/${memory.id}/image/reanalyze`, { method: "POST", body: JSON.stringify({ consent: true, request_id: `${Date.now()}-${Math.random().toString(36).slice(2)}` }) });
       if (result.metadata?.status === "failed") {
-        setCaptureError(`OpenAI image analysis failed: ${visionErrors[result.metadata.error] || result.metadata.error}. The original image and saved content were preserved.`);
+        setCaptureError(`OpenAI image analysis failed: ${visionErrors[result.metadata.error] || result.metadata.error}${providerDiagnostic(result.metadata)}. The original image and saved content were preserved.`);
       } else {
         const mapped = mapVisionEnvelope(result.vision);
         setVisionReview(mapped);
@@ -455,21 +470,31 @@ function AppContent() {
   };
   const cancelReminder = async () => { if (!selected) return; const previous = notificationMap[String(selected.id)] ?? (selected.reminder_at && selected.reminder_notification_id ? { notification_id: selected.reminder_notification_id, reminder_at: selected.reminder_at } : undefined); try { if (previous) await Notifications.cancelScheduledNotificationAsync(previous.notification_id); await request(`/memories/${selected.id}/reminder`, { method: "DELETE" }); await clearNotificationMetadata(selected.id); delete reminderDrafts.current[selected.id]; setReminderDay(null); setReminderTime(null); setReminderTouched(false); setSelected({ ...selected, reminder_at: null, reminder_notification_id: null }); setReminderError(null); setReminderMessage(null); } catch (error) { console.error("reminder cancellation failed", error); setReminderError("Unable to cancel the reminder. Please try again."); } };
   if (screen === "ask") return <AskChatScreen messages={chatMessages} question={question} questionBusy={questionBusy} questionError={questionError} onChangeQuestion={setQuestion} onAsk={askMemories} onBack={() => setScreen("list")} onRetry={askMemories} onOpenSource={async (source) => { try { setDetailReturnScreen("ask"); openDetail(await request(`/memories/${source.memory_id}`)); } catch { setQuestionError("This source is no longer available."); } }} />;
+  if (screen === "capture" && !selected) return <SafeAreaView style={styles.container}><View style={styles.loadingState}>
+    <Text style={styles.title}>Add Image Memory</Text>
+    {captureBusy && <ActivityIndicator />}
+    {!!captureProgress && <Text accessibilityLiveRegion="polite" style={styles.status}>{captureProgress}</Text>}
+    {!!captureError && <Text selectable style={styles.error}>{captureError}</Text>}
+    {!captureBusy && <Button title="Back to Memories" onPress={() => { setScreenState("list"); void load(); }} />}
+  </View></SafeAreaView>;
   if (screen === "capture" && selected) return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView>
     <Text style={styles.title}>Review Image Memory</Text>
     <Text style={styles.status}>The image and recognized content are preserved. Final content changes only after confirmation.</Text>
     <Text style={styles.aiLabel}>Title</Text><TextInput style={styles.input} value={captureTitle} onChangeText={(title) => { setCaptureTitle(title); titleTouched.current = true; }} editable={!captureBusy} maxLength={200} />
     {selected.source_image_path && <><Button title={showSavedImage ? "Hide Image" : "Preview Image"} onPress={() => setShowSavedImage(!showSavedImage)} />
       {showSavedImage && <Image style={styles.sourceImage} source={{ headers: imageAuthorizationHeaders(), uri: `${API_URL}/memories/${selected.id}/image/file` }} resizeMode="contain" />}</>}
-    <Button title="Reanalyse with OpenAI" onPress={confirmReanalyzeImage} disabled={captureBusy} />
+    {!!captureProgress && <Text accessibilityLiveRegion="polite" style={styles.status}>{captureProgress}</Text>}
+    {!selected.source_image_path && <><Text style={styles.error}>This draft has no confirmed photo upload.</Text><Button title="Add Photo" onPress={chooseImage} disabled={imageLoading || captureBusy} /></>}
+    <Button title="Reanalyse with OpenAI" onPress={confirmReanalyzeImage} disabled={captureBusy || imageLoading || !selected.source_image_path} />
     {visionReview ? <View style={styles.aiCard}><Text style={styles.aiTitle}>Analysis Draft · Review Required</Text>
       <VisionFields key={visionReview.draft_id} value={visionReview.draft} onChange={reviewVisionFields} disabled={captureBusy} />
     </View> : <><Text style={styles.aiLabel}>Content (enter manually if recognition failed)</Text>
       <TextInput style={[styles.input, styles.multiline]} multiline maxLength={12000} value={manualContent} onChangeText={setManualContent} editable={!captureBusy} placeholder="Enter the content to save" /></>}
     {reminderDay && <Text style={styles.status}>Suggested reminder: {reminderDay}{reminderTime ? ` · ${reminderTime}` : " · no specific time"}. You can edit and set it after saving.</Text>}
-    {(captureBusy || ocrBusy) && <ActivityIndicator />}{captureError && <Text style={styles.error}>{captureError}</Text>}{imageError && <Text style={styles.error}>{imageError}</Text>}
-    <Button title="Confirm and Save" onPress={finalizeCapture} disabled={captureBusy || ocrBusy || !captureTitle.trim()} />
-    <Button title="Save Draft for Later" onPress={() => setScreen("list")} disabled={captureBusy} />
+    {(captureBusy || imageLoading || ocrBusy) && <ActivityIndicator />}{captureError && <Text selectable style={styles.error}>{captureError}</Text>}{imageError && <Text selectable style={styles.error}>{imageError}</Text>}
+    <Button title="Confirm and Save" onPress={finalizeCapture} disabled={captureBusy || imageLoading || ocrBusy || !captureTitle.trim()} />
+    <Button title="Save Draft for Later" onPress={() => { setScreen("list"); void load(); }} disabled={captureBusy || imageLoading} />
+    {selected.confirmation_status === "draft" && !selected.source_image_path && <Button title="Delete Draft" color="#b00020" onPress={remove} disabled={captureBusy || imageLoading || ocrBusy} />}
   </ScrollView></SafeAreaView>;
   if (screen === "form" && selected?.source_image_path) return <MemoryImageEditRedesign selected={selected} draft={draft} setDraft={setDraft} editVision={editVision} onEditVision={editVisionFields} apiUrl={API_URL} showImage={showSavedImage} onToggleImage={() => setShowSavedImage(!showSavedImage)} onAddImage={chooseImage} onReanalyse={confirmReanalyzeImage} imageLoading={imageLoading} captureBusy={captureBusy} reminderSection={<ReminderEditor selected={selected} reminderDay={reminderDay} reminderTime={reminderTime} reminderTouched={reminderTouched} pickerValue={pickerValue} pickerMode={pickerMode} reminderBusy={reminderBusy} reminderMessage={reminderMessage} reminderError={reminderError} onPickValue={setPickerValue} onPickMode={setPickerMode} onSetDay={setReminderDay} onSetTime={setReminderTime} onMarkTouched={setReminderTouched} onSetReminder={setReminder} onCancelReminder={cancelReminder} />} onSave={save} onCancel={() => setScreen("detail")} />;
   if (screen === "form" && selected?.source_image_path) return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView>
@@ -518,7 +543,7 @@ function AppContent() {
   if (screen === "list") {
     const listTagChoices = availableTags(memories);
     const listDisplayedMemories = filterByTags(searchResults ?? memories, selectedTags);
-    return <MemoryListRedesign apiUrl={API_URL} memories={listDisplayedMemories} tagChoices={listTagChoices} selectedTags={selectedTags} searchKeyword={searchKeyword} searchResults={searchResults} loading={loading} searchLoading={searchLoading} loadError={loadError} searchError={searchError} showTagChoices={showTagChoices} showAddMenu={showAddMenu} onSearchChange={(value) => { setSearchKeyword(value); if (!value.trim()) setSearchResults(null); setSearchError(null); }} onSearch={search} onClearSearch={clearSearch} onToggleTags={() => setShowTagChoices(!showTagChoices)} onToggleTag={(tag) => setSelectedTags((tags) => tags.includes(tag) ? tags.filter((item) => item !== tag) : [...tags, tag])} onClearTags={() => setSelectedTags([])} onClearFilters={clearFilters} onRetry={searchError ? search : load} onRefresh={load} onOpenCreate={openCreate} onOpenCamera={() => chooseNewImage("camera")} onOpenLibrary={() => chooseNewImage("library")} onAsk={() => setScreen("ask")} onOpenMemory={openDetail} onToggleAddMenu={() => setShowAddMenu(!showAddMenu)} onSettings={() => Alert.alert("Settings", "Settings are not available in local mode yet.")} />;
+    return <MemoryListRedesign apiUrl={API_URL} memories={listDisplayedMemories} tagChoices={listTagChoices} selectedTags={selectedTags} searchKeyword={searchKeyword} searchResults={searchResults} loading={loading} searchLoading={searchLoading} loadError={loadError} searchError={searchError} showTagChoices={showTagChoices} showAddMenu={showAddMenu} onSearchChange={(value) => { setSearchKeyword(value); if (!value.trim()) setSearchResults(null); setSearchError(null); }} onSearch={search} onClearSearch={clearSearch} onToggleTags={() => setShowTagChoices(!showTagChoices)} onToggleTag={(tag) => setSelectedTags((tags) => tags.includes(tag) ? tags.filter((item) => item !== tag) : [...tags, tag])} onClearTags={() => setSelectedTags([])} onClearFilters={clearFilters} onRetry={searchError ? search : load} onRefresh={load} onOpenCreate={openCreate} onOpenCamera={() => chooseNewImage("camera")} onOpenLibrary={() => chooseNewImage("library")} onAsk={() => setScreen("ask")} onOpenMemory={openDetail} onToggleAddMenu={() => setShowAddMenu(!showAddMenu)} onSettings={() => onSignOut ? Alert.alert("Settings", "Sign out of this account?", [{ text: "Cancel", style: "cancel" }, { text: "Sign out", style: "destructive", onPress: onSignOut }]) : Alert.alert("Settings", "Settings are not available in local mode yet.")} />;
   }
   return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><Text style={styles.eyebrow}>LOCAL LIBRARY</Text><Text style={styles.title}>My Memories</Text><View style={styles.actionPanel}><View style={styles.topActionRow}><View style={styles.actionItem}><Button title="+ New Memory" onPress={openCreate} variant="primary" /></View><View style={styles.actionItem}><Button title="+ Take Photo" onPress={() => chooseNewImage("camera")} variant="primary" disabled={captureBusy} /></View><View style={styles.actionItem}><Button title="+ Choose Photo" onPress={() => chooseNewImage("library")} variant="primary" disabled={captureBusy} /></View></View></View><View style={styles.searchPanel}><View style={styles.searchRow}><TextInput style={styles.searchInput} placeholder="Search title, content, or tags" placeholderTextColor="#9CA3AF" value={searchKeyword} onChangeText={(value) => { setSearchKeyword(value); if (!value.trim()) setSearchResults(null); setSearchError(null); }} onSubmitEditing={search} returnKeyType="search" /><Button title="Search" onPress={search} /></View>{searchResults !== null && <Button title="Clear Search" onPress={clearSearch} />}
 <Button title="Ask My Memories" onPress={() => setScreen("ask")} />
@@ -531,8 +556,47 @@ function AppContent() {
 {!loading && !loadError && !displayedMemories.length ? <View style={styles.emptyState}><Text style={styles.emptyTitle}>{searchResults !== null || selectedTags.length > 0 ? "No Matches" : "Create Your First Memory"}</Text><Text style={styles.supportingText}>{searchResults !== null || selectedTags.length > 0 ? "Try another search or clear the filters." : "Create one manually, take a photo, or choose one from your library."}</Text>{(searchResults !== null || selectedTags.length > 0) && <Button title="Clear All Filters" onPress={clearFilters} />}</View> : <FlatList data={displayedMemories} contentContainerStyle={styles.listContent} keyExtractor={(item) => String(item.id)} renderItem={({ item }) => <TouchableOpacity style={styles.card} onPress={() => openDetail(item)} activeOpacity={0.72}><View style={styles.cardHeader}><Text style={styles.cardTitle} numberOfLines={2}>{item.title} <Text style={styles.cardDate}>· {memoryDate(item.created_at)}</Text></Text>{item.confirmation_status === "draft" && <Text style={styles.draftBadge}>Draft</Text>}</View>{item.category && <Text style={styles.cardMeta}>{item.category}</Text>}<Text style={styles.cardContent} numberOfLines={2}>{item.confirmed_content || (item.source_image_path ? "Image draft — open to continue reviewing" : item.original_text)}</Text><TagChips tags={item.tags} compact /></TouchableOpacity>} refreshing={loading} onRefresh={load} />}</SafeAreaView>;
 }
 
+function AuthGate() {
+  const cloud = process.env.EXPO_PUBLIC_APP_ENV === "cloud";
+  const [ready, setReady] = useState(!cloud);
+  const [signedIn, setSignedIn] = useState(!cloud);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!cloud) return;
+    setAccessTokenProvider(async () => refreshAccessToken());
+    (async () => {
+      const token = await readRefreshToken();
+      const accessToken = token ? await refreshAccessToken() : null;
+      setSignedIn(Boolean(accessToken));
+      setReady(true);
+    })().catch(() => { setSignedIn(false); setReady(true); });
+    return () => setAccessTokenProvider(null);
+  }, [cloud]);
+
+  if (!cloud) return <AppContent />;
+  if (!ready) return <SafeAreaView style={{ flex: 1, alignItems: "center", justifyContent: "center" }}><ActivityIndicator /><Text style={{ marginTop: 12 }}>Loading session…</Text></SafeAreaView>;
+  if (signedIn) return <AppContent onSignOut={async () => { await signOut(); setSignedIn(false); }} />;
+  return <SafeAreaView style={{ flex: 1, justifyContent: "center", padding: 24, backgroundColor: colors.background }}>
+    <Text style={{ fontSize: 28, fontWeight: "700", color: colors.primary, marginBottom: 8 }}>AI Personal Memory</Text>
+    <Text style={{ color: colors.secondaryText, marginBottom: 20 }}>Sign in to continue</Text>
+    <TextInput style={styles.input} autoCapitalize="none" autoComplete="email" keyboardType="email-address" placeholder="Email" value={email} onChangeText={setEmail} />
+    <TextInput style={styles.input} secureTextEntry placeholder="Password" value={password} onChangeText={setPassword} />
+    {error ? <Text style={styles.error}>{error}</Text> : null}
+    <Button title={busy ? "Signing in…" : "Sign in"} variant="primary" disabled={busy || !email || !password} onPress={async () => {
+      setBusy(true); setError(null);
+      try { await signIn(email.trim(), password); setSignedIn(true); }
+      catch (value) { setError(value instanceof Error ? value.message : "Sign-in failed"); }
+      finally { setBusy(false); }
+    }} />
+  </SafeAreaView>;
+}
+
 export default function App() {
-  return <SafeAreaProvider><AppContent /></SafeAreaProvider>;
+  return <SafeAreaProvider><AuthGate /></SafeAreaProvider>;
 }
 
 function MemoryListRedesign({ apiUrl, memories, tagChoices, selectedTags, searchKeyword, searchResults, loading, searchLoading, loadError, searchError, showTagChoices, showAddMenu, onSearchChange, onSearch, onClearSearch, onToggleTags, onToggleTag, onClearTags, onClearFilters, onRetry, onRefresh, onOpenCreate, onOpenCamera, onOpenLibrary, onAsk, onOpenMemory, onToggleAddMenu, onSettings }: { apiUrl: string; memories: Memory[]; tagChoices: string[]; selectedTags: string[]; searchKeyword: string; searchResults: Memory[] | null; loading: boolean; searchLoading: boolean; loadError: string | null; searchError: string | null; showTagChoices: boolean; showAddMenu: boolean; onSearchChange: (value: string) => void; onSearch: () => void; onClearSearch: () => void; onToggleTags: () => void; onToggleTag: (tag: string) => void; onClearTags: () => void; onClearFilters: () => void; onRetry: () => void; onRefresh: () => void; onOpenCreate: () => void; onOpenCamera: () => void; onOpenLibrary: () => void; onAsk: () => void; onOpenMemory: (memory: Memory) => void; onToggleAddMenu: () => void; onSettings: () => void }) {
@@ -569,11 +633,12 @@ function MemoryDetailRedesign({ memory, apiUrl, onBack, onEdit, onDelete }: { me
   }, [memory.id, memory.source_image_path]);
   let structured: Record<string, unknown> = {};
   if (memory.confirmed_vision) { try { structured = JSON.parse(memory.confirmed_vision); } catch { structured = {}; } }
-  const fields = [["Event date", structured.date || memory.event_date], ["Due date", structured.due_date || memory.due_date], ["Location", structured.location_name || memory.location], ["Address", structured.location_address], ["Organisation", structured.institution], ["Amount", structured.amount ? `${structured.amount}${structured.currency ? ` ${structured.currency}` : ""}` : memory.amount ? `${memory.amount}${memory.currency ? ` ${memory.currency}` : ""}` : null]].filter(([, value]) => value);
+  const eventDate = typeof structured.date === "string" && structured.date ? structured.date : memory.event_date;
+  const fields = [["Event date", eventDate], ["Due date", structured.due_date || memory.due_date], ["Location", structured.location_name || memory.location], ["Address", structured.location_address], ["Organisation", structured.institution], ["Amount", structured.amount ? `${structured.amount}${structured.currency ? ` ${structured.currency}` : ""}` : memory.amount ? `${memory.amount}${memory.currency ? ` ${memory.currency}` : ""}` : null]].filter(([, value]) => value);
   return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView contentContainerStyle={styles.detailContent}>
     <View style={styles.detailHeader}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Back" onPress={onBack} style={styles.backButton}><Text style={styles.backIcon}>‹</Text></TouchableOpacity><View style={styles.detailHeaderActions}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Edit Memory" onPress={onEdit} style={styles.pencilButton}><Text style={styles.pencilIcon}>✎</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel="More actions" onPress={() => setMenuOpen(!menuOpen)} style={styles.moreButton}><Text style={styles.moreIcon}>•••</Text></TouchableOpacity></View></View>
     {menuOpen && <View style={styles.overflowMenu}><TouchableOpacity accessibilityRole="button" onPress={() => { setMenuOpen(false); onDelete(); }}><Text style={styles.deleteMenuText}>Delete Memory</Text></TouchableOpacity></View>}
-    <Text style={styles.detailTitle}>{memory.title}</Text><Text style={styles.detailMeta}>{memory.category || "Uncategorised"} · {memoryDate(memory.created_at)}</Text>
+    <Text style={styles.detailTitle}>{memory.title}</Text><Text style={styles.detailMeta}>{memory.category || "Uncategorised"} · {memoryDate(eventDate || memory.created_at)}</Text>
     {memory.source_image_path && <View style={styles.detailImageSection}><Text style={styles.detailSectionTitle}>Original Image</Text>{imageError ? <View style={styles.imageLoadError}><Text style={styles.supportingText}>Unable to load image.</Text><Button title="Retry" onPress={() => { setImageError(false); setImageLoading(true); setImageRetry((value) => value + 1); }} compact /></View> : <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open image preview" activeOpacity={0.9} onPress={() => setPreviewOpen(true)} disabled={imageLoading}><View style={styles.detailImageFrame}>{imageLoading && <ActivityIndicator size="small" color="#27634a" />}<Image key={imageRetry} style={[styles.detailImage, { aspectRatio: imageSize.width / imageSize.height }]} source={{ headers: imageAuthorizationHeaders(), uri: memoryImageUrl(apiUrl, memory.id, memory.source_image_path!, "preview", imageRetry) }} resizeMode="contain" onLoad={(event) => { const { width, height } = event.nativeEvent.source; setImageSize({ width, height }); setImageLoading(false); }} onError={() => { setImageLoading(false); setImageError(true); }} /></View></TouchableOpacity>}{!imageError && !imageLoading && <Text style={styles.imageHint}>Tap to view full screen</Text>}<Modal visible={previewOpen} animationType="fade" presentationStyle="fullScreen" onRequestClose={() => setPreviewOpen(false)}><View style={styles.imagePreview}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Close image preview" onPress={() => setPreviewOpen(false)} style={styles.imagePreviewClose}><Text style={styles.imagePreviewCloseText}>×</Text></TouchableOpacity>{previewOpen && <Image style={styles.imagePreviewImage} source={{ headers: imageAuthorizationHeaders(), uri: memoryImageUrl(apiUrl, memory.id, memory.source_image_path!, "original", imageRetry) }} resizeMode="contain" />}</View></Modal></View>}
     <View style={styles.detailSection}><Text style={styles.detailSectionTitle}>Content</Text><MarkdownText value={memory.confirmed_content || memory.original_text} /></View>
     {!!fields.length && <View style={styles.detailSection}><Text style={styles.detailSectionTitle}>Important Information</Text>{fields.map(([label, value]) => <View key={String(label)} style={styles.structuredRow}><Text style={styles.structuredLabel}>{String(label)}</Text><Text style={styles.structuredValue}>{String(value)}</Text></View>)}</View>}

@@ -12,6 +12,8 @@ def migrate(url):
     parsed = make_url(url)
     if '-pooler.' in (parsed.host or ''):
         raise ValueError('Migrations require a direct connection')
+    if parsed.drivername in {'postgresql', 'postgres'}:
+        url = parsed.set(drivername='postgresql+psycopg')
     engine = create_engine(url, hide_parameters=True, poolclass=NullPool)
     try:
         with engine.begin() as connection:

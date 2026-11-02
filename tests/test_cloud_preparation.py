@@ -106,6 +106,77 @@ def test_pending_upload_owner_validation_and_immutable_promotion(cloud_api, monk
     assert len(s3.puts) == 1
 
 
+def test_cloud_photo_upload_preview_ocr_and_analysis_end_to_end(cloud_api, monkeypatch):
+    from app.routes import images
+    data = image_bytes()
+
+    class Bucket(FakeS3):
+        def get_object(self, **kw):
+            return {'Body': BytesIO(data)}
+        def generate_presigned_url(self, *args, **kw):
+            return 'https://synthetic.invalid/read'
+
+    bucket = Bucket(data)
+    monkeypatch.setattr(storage, 's3_client', lambda: bucket)
+    started = cloud_api.post('/memories/image-uploads', json={
+        'filename': 'synthetic.png', 'content_type': 'image/png', 'size': len(data)}, headers=headers())
+    assert started.status_code == 201
+    upload = started.json()
+    mid = upload['memory_id']
+    completed = cloud_api.post(f'/memories/{mid}/image/uploads/complete',
+        json={'upload_id': upload['upload_id']}, headers=headers())
+    assert completed.status_code == 200 and completed.json()['source_image_path']
+    read = cloud_api.get(f'/memories/{mid}/image/read', headers=headers())
+    assert read.status_code == 200 and read.json()['url'] == 'https://synthetic.invalid/read'
+    version = completed.json()['source_image_path'].rsplit('/', 1)[-1]
+    preview = cloud_api.get(f'/memories/{mid}/image/file?variant=thumbnail&v={version}', headers=headers())
+    assert preview.status_code == 200 and preview.headers['content-type'] == 'image/jpeg'
+    assert preview.headers['cache-control'] == 'private, max-age=86400, immutable'
+    cached = cloud_api.get(f'/memories/{mid}/image/file?variant=thumbnail&v={version}',
+        headers={**headers(), 'If-None-Match': preview.headers['etag']})
+    assert cached.status_code == 304
+    paths = []
+    def recognize(path):
+        paths.append(path)
+        assert path.read_bytes() == data
+        return {'status': 'completed', 'text': 'Synthetic document', 'error': None, 'duration_ms': 1}
+    monkeypatch.setattr(images, 'recognize', recognize)
+    ocr = cloud_api.post(f'/memories/{mid}/image/ocr', headers=headers())
+    assert ocr.status_code == 200 and ocr.json()['text'] == 'Synthetic document'
+    assert paths and not paths[0].exists()
+    fields = {field: None for field in vision.FIELDS}
+    fields.update(suggested_title='Synthetic', summary='Synthetic document', category='other', tags=[], warnings=[], uncertain_fields=[])
+    provider = Mock(return_value={'draft': fields, 'usage': {}, 'model': 'mock', 'duration_ms': 1})
+    monkeypatch.setattr(vision, 'analyze_text', provider)
+    analysed = cloud_api.post(f'/memories/{mid}/image/analyze-draft', json={
+        'text': 'Synthetic document', 'consent': True, 'request_id': 'synthetic-e2e'}, headers=headers())
+    assert analysed.status_code == 200 and analysed.json()['metadata']['status'] == 'generated'
+    provider.assert_called_once_with('Synthetic document')
+    # Generated analysis remains a draft, not confirmed content.
+    saved = cloud_api.get(f'/memories/{mid}', headers=headers()).json()
+    assert saved['confirmation_status'] == 'draft' and saved['confirmed_content'] == ''
+
+
+def test_unconfirmed_cloud_photo_rejects_analysis_before_provider(cloud_api, monkeypatch):
+    data = image_bytes()
+    bucket = FakeS3(data)
+    bucket.head_object = Mock(side_effect=RuntimeError('synthetic access denied'))
+    monkeypatch.setattr(storage, 's3_client', lambda: bucket)
+    provider = Mock(side_effect=AssertionError('Pending image must not reach OpenAI'))
+    monkeypatch.setattr(vision, 'analyze_image', provider)
+    started = cloud_api.post('/memories/image-uploads', json={
+        'filename': 'synthetic.png', 'content_type': 'image/png', 'size': len(data)}, headers=headers()).json()
+    mid = started['memory_id']
+    response = cloud_api.post(f'/memories/{mid}/image/uploads/complete',
+        json={'upload_id': started['upload_id']}, headers=headers())
+    assert response.status_code == 503
+    assert cloud_api.get(f'/memories/{mid}', headers=headers()).json()['source_image_path'] is None
+    response = cloud_api.post(f'/memories/{mid}/image/reanalyze', json={
+        'consent': True, 'request_id': 'synthetic-no-upload'}, headers=headers())
+    assert response.status_code == 400 and response.json()['detail'] == 'No image uploaded'
+    provider.assert_not_called()
+
+
 @pytest.mark.parametrize('mode', ['size', 'invalid', 'expired'])
 def test_reject_invalid_or_expired_uploads(cloud_api, monkeypatch, mode):
     data = image_bytes()
