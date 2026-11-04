@@ -1,12 +1,29 @@
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { API_URL, request } from "./api";
+import { API_URL, readMemoryImage, request, uploadMemoryImage } from "./api";
 import type { Memory } from "./api";
 import { restoreSession, signIn, signOut } from "./auth";
 
 type Draft = { title: string; original_text: string; category: string; tags: string };
 const blankDraft: Draft = { title: "", original_text: "", category: "", tags: "" };
 const dateLabel = (value: string) => new Intl.DateTimeFormat("en-NZ", { dateStyle: "medium" }).format(new Date(value));
+
+function MemoryPhoto({ memory, large = false }: { memory: Memory; large?: boolean }) {
+  const [url, setUrl] = useState("");
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let active = true;
+    setUrl(""); setFailed(false);
+    if (memory.source_image_path) readMemoryImage(memory.id).then((value) => { if (active) setUrl(value); }).catch(() => { if (active) setFailed(true); });
+    return () => { active = false; };
+  }, [memory.id, memory.source_image_path]);
+  if (!memory.source_image_path) return null;
+  if (failed) return <p className="photo-error">Photo preview unavailable.</p>;
+  if (!url) return <div className={`photo-placeholder${large ? " large" : ""}`} aria-label="Loading photo preview" />;
+  return <a className={`photo-link${large ? " large" : ""}`} href={url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" aria-label={`Open photo for ${memory.title}`}>
+    <img src={url} alt={memory.source_image_filename || `Photo for ${memory.title}`} referrerPolicy="no-referrer" />
+  </a>;
+}
 
 export default function App() {
   const [signedIn, setSignedIn] = useState(false);
@@ -21,6 +38,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
 
   const loadMemories = useCallback(async (term = "") => {
     setBusy(true); setError("");
@@ -46,9 +64,18 @@ export default function App() {
     event.preventDefault(); setBusy(true); setError(""); setNotice("");
     const body = { title: draft.title.trim(), original_text: draft.original_text.trim(), confirmed_content: editingMemory && draft.original_text.trim() === editingMemory.original_text ? editingMemory.confirmed_content : draft.original_text.trim(), category: draft.category.trim() || null, tags: draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean) };
     try {
-      if (editingId === null) await request<Memory>("/memories", { method: "POST", body: JSON.stringify(body) });
-      else await request<Memory>(`/memories/${editingId}`, { method: "PATCH", body: JSON.stringify(body) });
-      setDraft(blankDraft); setEditingId(null); setEditingMemory(null); setNotice("Memory saved."); await loadMemories(query);
+      const saved = editingId === null
+        ? await request<Memory>("/memories", { method: "POST", body: JSON.stringify(body) })
+        : await request<Memory>(`/memories/${editingId}`, { method: "PATCH", body: JSON.stringify(body) });
+      if (selectedImage) {
+        try { await uploadMemoryImage(saved.id, selectedImage); }
+        catch (e) {
+          setEditingId(saved.id); setEditingMemory(saved); setSelectedImage(null);
+          setError(`Memory text was saved, but the photo was not: ${e instanceof Error ? e.message : "upload failed"}`);
+          await loadMemories(query); return;
+        }
+      }
+      setDraft(blankDraft); setEditingId(null); setEditingMemory(null); setSelectedImage(null); setNotice("Memory saved."); await loadMemories(query);
     } catch (e) { setError(e instanceof Error ? e.message : "Could not save this Memory."); }
     finally { setBusy(false); }
   }
@@ -57,6 +84,7 @@ export default function App() {
     setEditingId(memory.id);
     setEditingMemory(memory);
     setDraft({ title: memory.title, original_text: memory.original_text, category: memory.category ?? "", tags: memory.tags.join(", ") });
+    setSelectedImage(null);
     setNotice(""); setError("");
     document.getElementById("memory-form")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -70,7 +98,7 @@ export default function App() {
   }
 
   async function handleSignOut() {
-    await signOut(); setSignedIn(false); setMemories([]); setDraft(blankDraft); setEditingId(null); setEditingMemory(null); setError("");
+    await signOut(); setSignedIn(false); setMemories([]); setDraft(blankDraft); setEditingId(null); setEditingMemory(null); setSelectedImage(null); setError("");
   }
 
   if (checkingSession) return <main className="center-shell"><div className="spinner" aria-label="Checking session" /></main>;
@@ -100,7 +128,7 @@ export default function App() {
         <section className="library-panel">
           <form className="search" onSubmit={(e) => { e.preventDefault(); void loadMemories(query); }}><span aria-hidden="true">⌕</span><input aria-label="Search Memories" placeholder="Search your library" value={query} onChange={(e) => setQuery(e.target.value)} /><button type="submit" disabled={busy}>Search</button></form>
           {busy && memories.length === 0 ? <div className="empty">Loading your library…</div> : memories.length === 0 ? <div className="empty"><div className="empty-icon">✳</div><h2>Your library is ready</h2><p>Add a note or document detail using the form.</p></div> : <div className="memory-list">{memories.map((memory) => <article className="memory-card" key={memory.id}>
-            <div className="memory-icon">{(memory.category || "M").slice(0, 1).toUpperCase()}</div><div className="memory-main"><div className="memory-title-row"><h2>{memory.title}</h2><span className="date">{dateLabel(memory.created_at)}</span></div>{memory.category && <p className="category">{memory.category}</p>}<p className="memory-copy">{memory.confirmed_content || memory.original_text}</p>{memory.tags.length > 0 && <div className="tags">{memory.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}<div className="card-actions"><button onClick={() => startEdit(memory)}>Edit</button><button className="delete-link" onClick={() => void removeMemory(memory)}>Delete</button></div></div>
+            <div className="memory-icon">{(memory.category || "M").slice(0, 1).toUpperCase()}</div><div className="memory-main"><div className="memory-title-row"><h2>{memory.title}</h2><span className="date">{dateLabel(memory.created_at)}</span></div>{memory.category && <p className="category">{memory.category}</p>}<p className="memory-copy">{memory.confirmed_content || memory.original_text}</p>{memory.source_image_path && <MemoryPhoto memory={memory} />} {memory.tags.length > 0 && <div className="tags">{memory.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}<div className="card-actions"><button onClick={() => startEdit(memory)}>Edit</button><button className="delete-link" onClick={() => void removeMemory(memory)}>Delete</button></div></div>
           </article>)}</div>}
         </section>
         <aside className="editor-panel" id="memory-form"><p className="eyebrow">MANUAL ENTRY</p><h2>{editingId === null ? "Add a Memory" : "Edit Memory"}</h2><p className="muted small-copy">Manual saving works without AI.</p>
@@ -109,8 +137,11 @@ export default function App() {
             <label>Details<textarea rows={6} value={draft.original_text} onChange={(e) => setDraft({ ...draft, original_text: e.target.value })} placeholder="Write the details you want to remember" required /></label>
             <label>Category<input maxLength={100} value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })} placeholder="Bill, receipt, notice…" /></label>
             <label>Tags<input value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} placeholder="Separate tags with commas" /></label>
+            <label>Photo (JPEG, PNG, or WebP; up to 10 MB)<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => setSelectedImage(e.target.files?.[0] ?? null)} /></label>
+            {selectedImage && <p className="photo-selected">Selected: {selectedImage.name}</p>}
+            {editingMemory?.source_image_path && !selectedImage && <div className="editor-photo"><p>Current photo</p><MemoryPhoto memory={editingMemory} large /></div>}
             <button className="primary-button" disabled={busy}>{busy ? "Saving…" : editingId === null ? "Save Memory" : "Save changes"}</button>
-            {editingId !== null && <button type="button" className="quiet-button cancel-button" onClick={() => { setEditingId(null); setEditingMemory(null); setDraft(blankDraft); }}>Cancel edit</button>}
+            {editingId !== null && <button type="button" className="quiet-button cancel-button" onClick={() => { setEditingId(null); setEditingMemory(null); setDraft(blankDraft); setSelectedImage(null); }}>Cancel edit</button>}
           </form>
         </aside>
       </div>

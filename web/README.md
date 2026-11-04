@@ -2,8 +2,8 @@
 
 This is a separate React web client. It uses the existing Cognito user pool and
 API Gateway URL; it does not modify or share native-only Expo storage and image
-handling. The current first slice supports sign-in, Memory list/search, manual
-create/edit/delete, and sign-out.
+handling. It supports sign-in, Memory list/search, manual create/edit/delete,
+photo upload and preview, and sign-out.
 
 ## Run locally
 
@@ -23,7 +23,10 @@ The browser calls Cognito and the API Gateway directly. The current API Gateway
 allows `http://localhost:5173` and the required `Authorization` and
 `Content-Type` headers for manual Memory CRUD. A future hosted Web deployment
 must allow its exact origin too. The CloudFormation template accepts `WebOrigin`
-for this setting and defines the unauthenticated preflight route.
+for both API Gateway and S3 upload CORS, and defines the unauthenticated preflight
+route.
 
-The Web slice does not yet implement photo selection/upload, native local
-notifications, or the AI image-review workflow.
+The browser uploads JPEG, PNG, and WebP images up to 10 MB directly to private
+S3 using short-lived presigned forms. Upload completion is validated by the
+existing API, and previews use short-lived signed reads. Native local
+notifications and the AI image-review workflow are not part of this Web slice.

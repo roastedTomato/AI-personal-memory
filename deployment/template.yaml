@@ -29,6 +29,12 @@ Resources:
       OwnershipControls:
         Rules:
           - ObjectOwnership: BucketOwnerEnforced
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins: [!Ref WebOrigin]
+            AllowedMethods: [POST]
+            AllowedHeaders: ['*']
+            MaxAge: 300
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:

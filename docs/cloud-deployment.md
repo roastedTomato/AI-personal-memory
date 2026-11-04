@@ -102,8 +102,9 @@ digest-pinned ECR image, and existing Secrets Manager ARNs
 runtime role. No VPC, NAT, RDS, remote push, sync, provisioned concurrency, scheduled
 worker or keep-alive. Logs retain seven days; S3/UserPool are retained on stack deletion.
 HTTP API CORS allows only `WebOrigin`; an explicit unauthenticated OPTIONS route
-rewrites preflight requests to the public health handler and returns 204. S3 browser
-CORS is not enabled; Web image transfers still need an exact-origin S3 CORS rule.
+rewrites preflight requests to the public health handler and returns 204. S3 CORS
+allows browser POST uploads from that same exact origin; a hosted Web deployment
+must pass its own origin for both services.
 
 ## Verification / remaining gates
 
