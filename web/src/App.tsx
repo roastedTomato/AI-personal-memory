@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { API_URL, readMemoryImage, request, uploadMemoryImage } from "./api";
-import type { Memory } from "./api";
+import { API_URL, createImageMemory, readMemoryImage, request, uploadMemoryImage } from "./api";
+import type { Memory, VisionDraft, VisionEnvelope } from "./api";
 import { restoreSession, signIn, signOut } from "./auth";
 
 type Draft = { title: string; original_text: string; category: string; tags: string };
@@ -39,6 +39,12 @@ export default function App() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [ocrText, setOcrText] = useState("");
+  const [ocrStarted, setOcrStarted] = useState(false);
+  const [visionReview, setVisionReview] = useState<VisionEnvelope | null>(null);
+  const [imageBusy, setImageBusy] = useState(false);
+  const [imagePendingConfirmation, setImagePendingConfirmation] = useState(false);
+  const [ocrEditedAfterAnalysis, setOcrEditedAfterAnalysis] = useState(false);
 
   const loadMemories = useCallback(async (term = "") => {
     setBusy(true); setError("");
@@ -62,19 +68,24 @@ export default function App() {
 
   async function handleSave(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError(""); setNotice("");
+    if (!draft.title.trim()) { setError("Enter a title before saving."); setBusy(false); return; }
+    if (imagePendingConfirmation && editingMemory?.source_image_path) {
+      try {
+        await request<Memory>(`/memories/${editingMemory.id}/image/finalize`, { method: "POST", body: JSON.stringify({
+          title: draft.title.trim(), text: ocrText.trim(), source_image_path: editingMemory.source_image_path,
+          draft_id: visionReview?.draft_id ?? null, draft: visionReview?.draft ?? null,
+        }) });
+        setEditingMemory(null); setEditingId(null); setImagePendingConfirmation(false); setVisionReview(null); setSelectedImage(null);
+        setDraft(blankDraft); setOcrText(""); setOcrStarted(false); setNotice("Photo details confirmed and saved."); await loadMemories(query);
+      } catch (e) { setError(e instanceof Error ? e.message : "Could not confirm and save the photo details."); }
+      finally { setBusy(false); }
+      return;
+    }
     const body = { title: draft.title.trim(), original_text: draft.original_text.trim(), confirmed_content: editingMemory && draft.original_text.trim() === editingMemory.original_text ? editingMemory.confirmed_content : draft.original_text.trim(), category: draft.category.trim() || null, tags: draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean) };
     try {
-      const saved = editingId === null
-        ? await request<Memory>("/memories", { method: "POST", body: JSON.stringify(body) })
-        : await request<Memory>(`/memories/${editingId}`, { method: "PATCH", body: JSON.stringify(body) });
-      if (selectedImage) {
-        try { await uploadMemoryImage(saved.id, selectedImage); }
-        catch (e) {
-          setEditingId(saved.id); setEditingMemory(saved); setSelectedImage(null);
-          setError(`Memory text was saved, but the photo was not: ${e instanceof Error ? e.message : "upload failed"}`);
-          await loadMemories(query); return;
-        }
-      }
+      await (editingId === null
+        ? request<Memory>("/memories", { method: "POST", body: JSON.stringify(body) })
+        : request<Memory>(`/memories/${editingId}`, { method: "PATCH", body: JSON.stringify(body) }));
       setDraft(blankDraft); setEditingId(null); setEditingMemory(null); setSelectedImage(null); setNotice("Memory saved."); await loadMemories(query);
     } catch (e) { setError(e instanceof Error ? e.message : "Could not save this Memory."); }
     finally { setBusy(false); }
@@ -83,8 +94,16 @@ export default function App() {
   function startEdit(memory: Memory) {
     setEditingId(memory.id);
     setEditingMemory(memory);
-    setDraft({ title: memory.title, original_text: memory.original_text, category: memory.category ?? "", tags: memory.tags.join(", ") });
     setSelectedImage(null);
+    const pending = memory.vision_draft ? JSON.parse(memory.vision_draft) as VisionEnvelope : null;
+    setVisionReview(pending);
+    const recognized = memory.image_text_draft ? JSON.parse(memory.image_text_draft) as { text?: string } : null;
+    const recoveredText = pending?.reviewed_text ?? memory.confirmed_image_text ?? recognized?.text ?? memory.ocr_text ?? "";
+    setOcrText(recoveredText);
+    setDraft({ title: memory.title, original_text: memory.confirmation_status === "draft" || pending ? (memory.original_text || recoveredText) : (memory.confirmed_content || memory.original_text), category: memory.category ?? "", tags: memory.tags.join(", ") });
+    setOcrStarted(Boolean(pending || recognized || memory.ocr_text || memory.confirmed_image_text));
+    setImagePendingConfirmation(memory.confirmation_status === "draft" || Boolean(pending));
+    setOcrEditedAfterAnalysis(false);
     setNotice(""); setError("");
     document.getElementById("memory-form")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -95,6 +114,77 @@ export default function App() {
     try { await request<null>(`/memories/${memory.id}`, { method: "DELETE" }); setNotice("Memory deleted."); await loadMemories(query); }
     catch (e) { setError(e instanceof Error ? e.message : "Could not delete this Memory."); }
     finally { setBusy(false); }
+  }
+
+  async function runAutomaticImageRecognition(memory: Memory) {
+    setImageBusy(true); setError(""); setNotice("Photo uploaded. Reading its text…"); setOcrStarted(true); setVisionReview(null);
+    try {
+      const ocr = await request<{ text?: string; status: string; error?: string | null }>(`/memories/${memory.id}/image/ocr`, { method: "POST" });
+      const text = ocr.text ?? "";
+      setOcrText(text); setDraft((current) => ({ ...current, original_text: text }));
+      if (!text.trim()) {
+        setError(`OCR did not find readable text (${ocr.error || ocr.status}). You can enter details manually before confirming.`);
+        setNotice("");
+        return;
+      }
+      setNotice("Text recognised. AI is extracting a title, summary, category, tags, and document fields…");
+      const result = await request<{ vision: VisionEnvelope | null; metadata?: { status?: string; error?: string } }>(`/memories/${memory.id}/image/analyze-draft`, {
+        method: "POST", body: JSON.stringify({ consent: true, text_confirmed: true, request_id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, text }),
+      });
+      if (result.metadata?.status === "failed") throw new Error(`AI analysis failed (${result.metadata.error || "provider error"}). The OCR text and photo are preserved for review.`);
+      if (!result.vision) throw new Error("The AI response did not contain a review draft. You can still confirm the OCR text manually.");
+      setVisionReview(result.vision);
+      setDraft((current) => ({ ...current, title: result.vision?.draft.suggested_title?.trim() || current.title || memory.title, original_text: result.vision?.reviewed_text || text, category: result.vision?.draft.category || "", tags: result.vision?.draft.tags.join(", ") || "" }));
+      setNotice("AI suggestions are ready. Review and edit all fields, then confirm to save.");
+      const fresh = await request<Memory>(`/memories/${memory.id}`); setEditingMemory(fresh); await loadMemories(query);
+    } catch (e) { setError(e instanceof Error ? e.message : "Automatic recognition failed. The photo is preserved."); setNotice(""); }
+    finally { setImageBusy(false); }
+  }
+
+  async function handlePhotoSelection(file: File | undefined, input: HTMLInputElement) {
+    if (!file) return;
+    const agreed = window.confirm("Automatically read this photo and extract its title and details? The image will be uploaded to your private storage; OCR text will be sent to OpenAI for suggestions, which may incur a cost. Nothing becomes confirmed until you review and click Confirm and save.");
+    if (!agreed) { input.value = ""; setSelectedImage(null); return; }
+    setSelectedImage(file); setImageBusy(true); setError(""); setNotice("Uploading photo…"); setVisionReview(null); setOcrText(""); setOcrStarted(false);
+    const titleFromFile = file.name.replace(/\.[^.]+$/, "").trim() || "Image Memory";
+    try {
+      let memory: Memory;
+      if (editingId === null) {
+        memory = await createImageMemory(file);
+      } else if (editingMemory) {
+        await uploadMemoryImage(editingMemory.id, file);
+        memory = await request<Memory>(`/memories/${editingMemory.id}`);
+      } else {
+        throw new Error("Open a Memory before replacing its photo.");
+      }
+      const title = draft.title.trim() || titleFromFile;
+      setEditingId(memory.id); setEditingMemory(memory); setImagePendingConfirmation(true);
+      setDraft((current) => ({ ...current, title, original_text: editingId === null ? "" : current.original_text }));
+      setSelectedImage(null); input.value = "";
+      await runAutomaticImageRecognition(memory);
+    } catch (e) { setSelectedImage(null); input.value = ""; setError(e instanceof Error ? e.message : "Photo upload failed."); setNotice(""); }
+    finally { setImageBusy(false); }
+  }
+
+  async function analyzeImageText() {
+    if (!editingMemory || !ocrText.trim()) return;
+    if (!window.confirm("Send the edited OCR text to OpenAI again to refresh the suggestions? This may incur a cost.")) return;
+    setImageBusy(true); setError(""); setNotice("");
+    try {
+      const result = await request<{ vision: VisionEnvelope | null; metadata?: { status?: string; error?: string } }>(`/memories/${editingMemory.id}/image/analyze-draft`, {
+        method: "POST", body: JSON.stringify({ consent: true, text_confirmed: true, request_id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, text: ocrText.trim() }),
+      });
+      if (result.metadata?.status === "failed") throw new Error(`AI analysis failed (${result.metadata.error || "provider error"}). The photo and OCR text remain saved.`);
+      if (!result.vision) throw new Error("The AI response did not contain a review draft.");
+      setVisionReview(result.vision); setNotice("AI draft ready. Check every field and accept or reject it.");
+      setOcrEditedAfterAnalysis(false);
+      const fresh = await request<Memory>(`/memories/${editingMemory.id}`); setEditingMemory(fresh); await loadMemories(query);
+    } catch (e) { setError(e instanceof Error ? e.message : "AI analysis failed. The photo and OCR text remain saved."); }
+    finally { setImageBusy(false); }
+  }
+
+  function updateVisionDraft<K extends keyof VisionDraft>(key: K, value: VisionDraft[K]) {
+    setVisionReview((current) => current ? { ...current, draft: { ...current.draft, [key]: value } } : current);
   }
 
   async function handleSignOut() {
@@ -134,13 +224,28 @@ export default function App() {
         <aside className="editor-panel" id="memory-form"><p className="eyebrow">MANUAL ENTRY</p><h2>{editingId === null ? "Add a Memory" : "Edit Memory"}</h2><p className="muted small-copy">Manual saving works without AI.</p>
           <form className="form-stack" onSubmit={handleSave}>
             <label>Title<input maxLength={200} value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="e.g. Power bill — November" required /></label>
-            <label>Details<textarea rows={6} value={draft.original_text} onChange={(e) => setDraft({ ...draft, original_text: e.target.value })} placeholder="Write the details you want to remember" required /></label>
-            <label>Category<input maxLength={100} value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })} placeholder="Bill, receipt, notice…" /></label>
-            <label>Tags<input value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} placeholder="Separate tags with commas" /></label>
-            <label>Photo (JPEG, PNG, or WebP; up to 10 MB)<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => setSelectedImage(e.target.files?.[0] ?? null)} /></label>
+            <label>{imagePendingConfirmation ? "Recognised text — review and correct" : "Details"}<textarea rows={6} value={draft.original_text} onChange={(e) => { setDraft({ ...draft, original_text: e.target.value }); if (imagePendingConfirmation) { setOcrText(e.target.value); if (visionReview) setOcrEditedAfterAnalysis(true); } }} placeholder="Write the details you want to remember" required /></label>
+            <label>Category{imagePendingConfirmation ? <select value={draft.category} onChange={(e) => { setDraft({ ...draft, category: e.target.value }); if (visionReview) updateVisionDraft("category", (e.target.value || null) as VisionDraft["category"]); }}><option value="">Unclassified</option>{["bill", "receipt", "notice", "event", "appointment", "travel", "other"].map((category) => <option key={category} value={category}>{category}</option>)}</select> : <input maxLength={100} value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })} placeholder="Bill, receipt, notice…" />}</label>
+            <label>Tags<input value={draft.tags} onChange={(e) => { setDraft({ ...draft, tags: e.target.value }); if (visionReview) updateVisionDraft("tags", e.target.value.split(",").map((tag) => tag.trim()).filter(Boolean)); }} placeholder="Separate tags with commas" /></label>
+            <label>Photo (JPEG, PNG, or WebP; up to 10 MB)<input type="file" accept="image/jpeg,image/png,image/webp" disabled={imageBusy} onChange={(e) => { const input = e.currentTarget; void handlePhotoSelection(input.files?.[0], input); }} /></label>
             {selectedImage && <p className="photo-selected">Selected: {selectedImage.name}</p>}
             {editingMemory?.source_image_path && !selectedImage && <div className="editor-photo"><p>Current photo</p><MemoryPhoto memory={editingMemory} large /></div>}
-            <button className="primary-button" disabled={busy}>{busy ? "Saving…" : editingId === null ? "Save Memory" : "Save changes"}</button>
+            {editingMemory?.source_image_path && <section className="ai-review-section">
+              <h3>AI image review</h3>
+              {!ocrStarted && !visionReview && editingMemory?.confirmation_status !== "draft" && <><p className="muted small-copy">Select a photo to automatically run OCR and prepare an AI draft.</p><button type="button" className="secondary-button" disabled={busy || imageBusy} onClick={() => { if (window.confirm("Re-run OCR on this photo and send the recognised text to OpenAI for suggestions? This may incur a cost.")) { setImagePendingConfirmation(true); void runAutomaticImageRecognition(editingMemory!); } }}>{imageBusy ? "Reading photo…" : "Re-run OCR and AI"}</button></>}
+              {ocrStarted && <><p className="muted small-copy">OCR text is shown in the Details field above. Correct it there; refresh AI suggestions if you make changes.</p>{ocrEditedAfterAnalysis && visionReview && <button type="button" className="secondary-button" disabled={imageBusy || !ocrText.trim()} onClick={() => void analyzeImageText()}>Refresh suggestions from edited text</button>}{!visionReview && ocrText.trim() && <button type="button" className="secondary-button" disabled={imageBusy} onClick={() => void analyzeImageText()}>Analyse OCR text with AI</button>}</>}
+              {visionReview && <div className="vision-draft"><h4>AI suggestions · review required</h4>
+                <label>Summary<textarea rows={4} value={visionReview.draft.summary ?? ""} onChange={(e) => updateVisionDraft("summary", e.target.value || null)} /></label>
+                <div className="vision-fields">
+                  {(["amount", "currency", "date", "time", "due_date", "institution", "location_name", "location_address", "location_purpose"] as const).map((key) => <label key={key}>{({ amount: "Amount", currency: "Currency", date: "Date", time: "Time", due_date: "Due date", institution: "Institution", location_name: "Location", location_address: "Address", location_purpose: "Purpose" })[key]}<input type={key === "date" || key === "due_date" ? "date" : key === "time" ? "time" : "text"} maxLength={key === "currency" ? 3 : undefined} value={visionReview.draft[key] ?? ""} onChange={(e) => updateVisionDraft(key, e.target.value || null)} /></label>)}
+                </div>
+                {visionReview.draft.suggested_title && <button type="button" className="quiet-button" onClick={() => setDraft((current) => ({ ...current, title: visionReview.draft.suggested_title || current.title }))}>Use suggested title: {visionReview.draft.suggested_title}</button>}
+                {visionReview.draft.uncertain_fields.length > 0 && <p className="review-warning">Check uncertain fields: {visionReview.draft.uncertain_fields.join(", ")}</p>}
+                {visionReview.draft.warnings.map((warning, index) => <p className="review-warning" key={index}>{warning}</p>)}
+                <p className="muted small-copy">The OCR text and AI suggestions are drafts. Review all fields, then confirm below.</p>
+              </div>}
+            </section>}
+            <button className="primary-button" disabled={busy || imageBusy}>{busy ? "Saving…" : imagePendingConfirmation ? "Confirm and save" : editingId === null ? "Save Memory" : "Save changes"}</button>
             {editingId !== null && <button type="button" className="quiet-button cancel-button" onClick={() => { setEditingId(null); setEditingMemory(null); setDraft(blankDraft); setSelectedImage(null); }}>Cancel edit</button>}
           </form>
         </aside>

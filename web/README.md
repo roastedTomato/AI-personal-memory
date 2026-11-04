@@ -26,7 +26,11 @@ must allow its exact origin too. The CloudFormation template accepts `WebOrigin`
 for both API Gateway and S3 upload CORS, and defines the unauthenticated preflight
 route.
 
-The browser uploads JPEG, PNG, and WebP images up to 10 MB directly to private
-S3 using short-lived presigned forms. Upload completion is validated by the
-existing API, and previews use short-lived signed reads. Native local
-notifications and the AI image-review workflow are not part of this Web slice.
+After photo selection, the browser asks for consent to automatic OCR and AI
+analysis, then uploads JPEG, PNG, or WebP images (up to 10 MB) to private S3
+using a short-lived presigned form. OCR text is sent to OpenAI to suggest a
+title, summary, category, tags, and document fields; the image itself is not sent
+to OpenAI in that step. The user can edit the recognised text and suggestions.
+Nothing is confirmed until the user clicks **Confirm and save**. Previews use
+short-lived signed reads. Native local notifications are not part of this Web
+slice.
