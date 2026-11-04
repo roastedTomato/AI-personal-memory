@@ -19,12 +19,11 @@ browser bundle.
 
 ## Cloud prerequisite
 
-The browser calls Cognito and the API Gateway directly. The API must allow the
-chosen web origin with CORS and permit `Authorization` and `Content-Type` headers
-for the required methods. The repository's deployment template currently has no
-API Gateway CORS configuration, so local sign-in can work while API calls are
-blocked by the browser until the deployed API's CORS policy is configured. This
-Web foundation does not change AWS infrastructure.
+The browser calls Cognito and the API Gateway directly. The current API Gateway
+allows `http://localhost:5173` and the required `Authorization` and
+`Content-Type` headers for manual Memory CRUD. A future hosted Web deployment
+must allow its exact origin too. The CloudFormation template accepts `WebOrigin`
+for this setting and defines the unauthenticated preflight route.
 
 The Web slice does not yet implement photo selection/upload, native local
 notifications, or the AI image-review workflow.

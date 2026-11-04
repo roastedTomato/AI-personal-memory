@@ -95,13 +95,15 @@ removed on success/failure. Root filesystem may remain read-only. OCR subprocess
 keeps its 15-second cap (or remaining budget), English language and single-thread cap.
 
 `deployment/template.yaml` is a CloudFormation preparation template, not deployed.
-It accepts an existing digest-pinned ECR image and existing Secrets Manager ARNs
+It accepts an exact `WebOrigin` (defaulting to the local Vite origin), an existing
+digest-pinned ECR image, and existing Secrets Manager ARNs
 (`pooled_url`, `api_key` fields), then defines private SSE-S3 storage, Cognito,
 2048 MB Lambda/512 MB temporary space/29-second timeout, HTTP API and a minimal
 runtime role. No VPC, NAT, RDS, remote push, sync, provisioned concurrency, scheduled
 worker or keep-alive. Logs retain seven days; S3/UserPool are retained on stack deletion.
-S3 browser CORS is not enabled: this preparation targets native Expo; Expo Web S3
-transfers need explicit origin configuration before acceptance.
+HTTP API CORS allows only `WebOrigin`; an explicit unauthenticated OPTIONS route
+rewrites preflight requests to the public health handler and returns 204. S3 browser
+CORS is not enabled; Web image transfers still need an exact-origin S3 CORS rule.
 
 ## Verification / remaining gates
 

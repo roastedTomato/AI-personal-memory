@@ -1,6 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: AI Personal Memory test environment. No VPC, NAT, RDS or provisioned concurrency.
 Parameters:
+  WebOrigin:
+    Type: String
+    Default: http://localhost:5173
+    Description: Exact browser origin allowed to call the HTTP API
   ImageUri:
     Type: String
     Description: Existing ECR image URI pinned to sha256 digest (linux amd64)
@@ -137,6 +141,11 @@ Resources:
     Properties:
       Name: !Sub '${AWS::StackName}-api'
       ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: [!Ref WebOrigin]
+        AllowHeaders: [authorization, content-type]
+        AllowMethods: [GET, POST, PATCH, DELETE, OPTIONS]
+        MaxAge: 300
   Integration:
     Type: AWS::ApiGatewayV2::Integration
     Properties:
@@ -145,12 +154,33 @@ Resources:
       IntegrationUri: !GetAtt ApiFunction.Arn
       PayloadFormatVersion: '2.0'
       TimeoutInMillis: 29000
+  PreflightIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ApiFunction.Arn
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 29000
+      RequestParameters:
+        'overwrite:path': '/health'
+      ResponseParameters:
+        '405':
+          - Destination: overwrite.statuscode
+            Source: '204'
   Route:
     Type: AWS::ApiGatewayV2::Route
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: '$default'
       Target: !Sub 'integrations/${Integration}'
+  PreflightRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'OPTIONS /{proxy+}'
+      AuthorizationType: NONE
+      Target: !Sub 'integrations/${PreflightIntegration}'
   Stage:
     Type: AWS::ApiGatewayV2::Stage
     Properties:
