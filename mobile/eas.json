@@ -1,0 +1,23 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "simulator": {
+      "environment": "production",
+      "distribution": "internal",
+      "ios": {
+        "simulator": true
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://t4esypody7.execute-api.ap-southeast-2.amazonaws.com",
+        "EXPO_PUBLIC_APP_ENV": "cloud",
+        "EXPO_PUBLIC_STORAGE_BACKEND": "s3",
+        "EXPO_PUBLIC_COGNITO_REGION": "ap-southeast-2",
+        "EXPO_PUBLIC_COGNITO_USER_POOL_ID": "ap-southeast-2_SPCQB4kU7",
+        "EXPO_PUBLIC_COGNITO_CLIENT_ID": "3ttci41l1du3ipflt1addj04j7"
+      }
+    }
+  }
+}

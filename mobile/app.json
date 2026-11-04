@@ -3,6 +3,14 @@
     "name": "AI Personal Memory",
     "slug": "ai-personal-memory",
     "version": "1.0.0",
+    "ios": {
+      "bundleIdentifier": "com.eva.aipersonalmemory",
+      "buildNumber": "1",
+      "supportsTablet": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "assetBundlePatterns": [
@@ -13,6 +21,11 @@
       "@react-native-community/datetimepicker",
       "expo-image-picker",
       "expo-secure-store"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "701f192e-b379-4877-ac76-26bbdb74ce33"
+      }
+    }
   }
 }
