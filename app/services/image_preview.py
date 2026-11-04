@@ -9,8 +9,12 @@ from PIL import Image, ImageOps
 @lru_cache(maxsize=24)
 def image_preview(path: str, modified_ns: int, size: int, variant: str) -> bytes:
     # Modification time and size invalidate the cache when a source changes.
+    return image_preview_bytes(Path(path).read_bytes(), variant)
+
+
+def image_preview_bytes(data: bytes, variant: str) -> bytes:
     limit = 256 if variant == "thumbnail" else 1200
-    with Image.open(Path(path)) as source:
+    with Image.open(BytesIO(data)) as source:
         source.draft("RGB", (limit, limit))
         image = ImageOps.exif_transpose(source)
         image.thumbnail((limit, limit), Image.Resampling.LANCZOS)

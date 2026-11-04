@@ -76,6 +76,12 @@ def image_file(memory_id: int, request: Request, db: DatabaseSession, variant: L
     memory = owned(db, memory_id)
     if memory.source_image_path and memory.source_image_path.startswith("s3://") and variant == "original":
         return RedirectResponse(storage.presigned_read(memory.source_image_path), status_code=307, headers={"Cache-Control": "no-store"})
+    if memory.source_image_path and memory.source_image_path.startswith("s3://") and variant == "thumbnail":
+        try:
+            return RedirectResponse(storage.presigned_derivative(memory.source_image_path, variant), status_code=307,
+                                    headers={"Cache-Control": "private, max-age=86400, immutable"})
+        except Exception:
+            pass
     source_version = Path(memory.source_image_path or "").name
     path = managed_image(memory)
     stat = path.stat()
@@ -89,6 +95,14 @@ def image_file(memory_id: int, request: Request, db: DatabaseSession, variant: L
         content = image_preview(str(path), stat.st_mtime_ns, stat.st_size, variant)
     except (OSError, ValueError, UnidentifiedImageError):
         raise HTTPException(status_code=422, detail="Image preview unavailable") from None
+    if variant == "thumbnail" and memory.source_image_path and memory.source_image_path.startswith("s3://"):
+        try:
+            storage.s3_client().put_object(Bucket=config.S3_BUCKET,
+                Key=storage.derivative_key(memory.source_image_path, variant), Body=content,
+                ContentType="image/jpeg", CacheControl="private, max-age=31536000, immutable",
+                ServerSideEncryption="AES256")
+        except Exception:
+            pass
     return Response(content=content, media_type="image/jpeg", headers=headers)
 
 

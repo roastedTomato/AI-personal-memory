@@ -12,6 +12,7 @@ from .. import config, storage
 from ..auth import current_user
 from ..database import get_db
 from ..models import ImageUpload, Memory
+from ..services.image_preview import image_preview_bytes
 from .images import owned
 from .memories import to_read
 
@@ -107,6 +108,14 @@ def complete_upload(memory_id: int, payload: CompleteRequest, db: DB):
     client.put_object(Bucket=config.S3_BUCKET, Key=key, Body=data, ContentType=record.mime_type,
                       ServerSideEncryption='AES256')
     path = f's3://{config.S3_BUCKET}/{key}'
+    try:
+        thumbnail = image_preview_bytes(data, 'thumbnail')
+        client.put_object(Bucket=config.S3_BUCKET, Key=storage.derivative_key(path, 'thumbnail'),
+                          Body=thumbnail, ContentType='image/jpeg', CacheControl='private, max-age=31536000, immutable',
+                          ServerSideEncryption='AES256')
+    except Exception:
+        # The original remains usable; older uploads fall back to dynamic previews.
+        pass
     record.completed_path = path
     memory.source_image_path = path
     memory.source_image_filename, memory.source_image_mime_type, memory.source_image_size = record.filename, record.mime_type, record.size

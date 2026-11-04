@@ -250,9 +250,10 @@ function AppContent({ onSignOut }: { onSignOut?: () => Promise<void> } = {}) {
   const startImageMemory = async (asset: ImagePicker.ImagePickerAsset) => {
     if (captureLock.current) return;
     captureLock.current = true; setCaptureBusy(true); setCaptureError(null);
-    setSelected(null); setScreenState("capture"); setCaptureProgress("Preparing photo…");
+    setSelected(null); setCaptureTitle(""); setManualContent(""); setVisionReview(null); setScreenState("capture"); setCaptureProgress("Preparing photo…");
     try {
       const prepared = await uploadableImage(asset);
+      setCaptureTitle(prepared.name.replace(/\.[^.]+$/, "") || "Image Memory"); titleTouched.current = false;
       const memory = await createMemoryFromImage(prepared.uri, prepared.name, prepared.type, setCaptureProgress);
       setSelected(memory); setCaptureTitle(memory.title); titleTouched.current = false; setManualContent(""); setImageText(""); setOcrText(""); setVisionReview(null);
       setReminderDay(null); setReminderTime(null); setReminderTouched(false); setShowSavedImage(false);
@@ -470,13 +471,18 @@ function AppContent({ onSignOut }: { onSignOut?: () => Promise<void> } = {}) {
   };
   const cancelReminder = async () => { if (!selected) return; const previous = notificationMap[String(selected.id)] ?? (selected.reminder_at && selected.reminder_notification_id ? { notification_id: selected.reminder_notification_id, reminder_at: selected.reminder_at } : undefined); try { if (previous) await Notifications.cancelScheduledNotificationAsync(previous.notification_id); await request(`/memories/${selected.id}/reminder`, { method: "DELETE" }); await clearNotificationMetadata(selected.id); delete reminderDrafts.current[selected.id]; setReminderDay(null); setReminderTime(null); setReminderTouched(false); setSelected({ ...selected, reminder_at: null, reminder_notification_id: null }); setReminderError(null); setReminderMessage(null); } catch (error) { console.error("reminder cancellation failed", error); setReminderError("Unable to cancel the reminder. Please try again."); } };
   if (screen === "ask") return <AskChatScreen messages={chatMessages} question={question} questionBusy={questionBusy} questionError={questionError} onChangeQuestion={setQuestion} onAsk={askMemories} onBack={() => setScreen("list")} onRetry={askMemories} onOpenSource={async (source) => { try { setDetailReturnScreen("ask"); openDetail(await request(`/memories/${source.memory_id}`)); } catch { setQuestionError("This source is no longer available."); } }} />;
-  if (screen === "capture" && !selected) return <SafeAreaView style={styles.container}><View style={styles.loadingState}>
-    <Text style={styles.title}>Add Image Memory</Text>
-    {captureBusy && <ActivityIndicator />}
+  if (screen === "capture" && !selected) return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView>
+    <Text style={styles.title}>Review Image Memory</Text>
+    <Text style={styles.status}>The image and recognized content will appear here for review. Final content changes only after confirmation.</Text>
+    <Text style={styles.aiLabel}>Title</Text><TextInput style={styles.input} value={captureTitle} onChangeText={(title) => { setCaptureTitle(title); titleTouched.current = true; }} editable={!captureBusy} maxLength={200} />
     {!!captureProgress && <Text accessibilityLiveRegion="polite" style={styles.status}>{captureProgress}</Text>}
+    <Text style={styles.aiLabel}>Content</Text>
+    <TextInput style={[styles.input, styles.multiline]} multiline maxLength={12000} value={manualContent} onChangeText={setManualContent} editable={!captureBusy} placeholder="Recognized content will appear here; you can also enter it manually" />
+    {captureBusy && <ActivityIndicator />}
     {!!captureError && <Text selectable style={styles.error}>{captureError}</Text>}
+    <Button title="Confirm and Save" onPress={() => undefined} disabled />
     {!captureBusy && <Button title="Back to Memories" onPress={() => { setScreenState("list"); void load(); }} />}
-  </View></SafeAreaView>;
+  </ScrollView></SafeAreaView>;
   if (screen === "capture" && selected) return <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.container}><ScrollView>
     <Text style={styles.title}>Review Image Memory</Text>
     <Text style={styles.status}>The image and recognized content are preserved. Final content changes only after confirmation.</Text>

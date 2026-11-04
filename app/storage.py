@@ -32,6 +32,18 @@ def presigned_read(path):
                'Key': object_key(path)}, ExpiresIn=300)
 
 
+def derivative_key(path, variant):
+    key = object_key(path)
+    return key.replace('/originals/', '/derivatives/', 1) + f'.{variant}.jpg'
+
+
+def presigned_derivative(path, variant):
+    key = derivative_key(path, variant)
+    s3_client().head_object(Bucket=config.S3_BUCKET, Key=key)
+    return s3_client().generate_presigned_url('get_object', Params={'Bucket': config.S3_BUCKET,
+               'Key': key}, ExpiresIn=300)
+
+
 def materialize(path):
     key = object_key(path)
     files = scratch.get()
@@ -52,4 +64,6 @@ def materialize(path):
 
 
 def delete_original(path):
-    s3_client().delete_object(Bucket=config.S3_BUCKET, Key=object_key(path))
+    client = s3_client()
+    client.delete_object(Bucket=config.S3_BUCKET, Key=derivative_key(path, 'thumbnail'))
+    client.delete_object(Bucket=config.S3_BUCKET, Key=object_key(path))
