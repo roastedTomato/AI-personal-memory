@@ -76,7 +76,8 @@ Resources:
     DeletionPolicy: Retain
     Properties:
       AdminCreateUserConfig:
-        AllowAdminCreateUserOnly: true
+        AllowAdminCreateUserOnly: false
+      AutoVerifiedAttributes: [email]
       UsernameAttributes: [email]
       Policies:
         PasswordPolicy:

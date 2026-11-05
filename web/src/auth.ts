@@ -120,3 +120,25 @@ export async function signOut() {
 export async function restoreSession(): Promise<boolean> {
   return Boolean(await getAccessToken());
 }
+
+async function registrationCall(target: string, body: Record<string, unknown>) {
+  const { endpoint: url, clientId: appClient } = config();
+  const response = await fetch(url, {
+    method: "POST", signal: AbortSignal.timeout(20000),
+    headers: { "Content-Type": "application/x-amz-json-1.1", "X-Amz-Target": `AWSCognitoIdentityProviderService.${target}` },
+    body: JSON.stringify({ ClientId: appClient, ...body }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.message || "Registration could not be completed.");
+  return payload;
+}
+export async function register(email: string, password: string): Promise<boolean> {
+  const result = await registrationCall("SignUp", { Username: email, Password: password, UserAttributes: [{ Name: "email", Value: email }] });
+  return result.UserConfirmed === true;
+}
+export async function confirmRegistration(email: string, code: string) {
+  await registrationCall("ConfirmSignUp", { Username: email, ConfirmationCode: code });
+}
+export async function resendRegistrationCode(email: string) {
+  await registrationCall("ResendConfirmationCode", { Username: email });
+}

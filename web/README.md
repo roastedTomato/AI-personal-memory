@@ -1,5 +1,30 @@
 # AI Personal Memory Web foundation
 
+## Hosted website
+
+URL: https://d2hi82pya3luc1.cloudfront.net
+
+AWS stack: `ai-personal-memory-web` (`deployment/web.yaml`), region
+`ap-southeast-2`. The private website bucket is
+`ai-personal-memory-web-webbucket-gscxygrgjqvl`; CloudFront distribution is
+`E3RHZGLPP9XWSI`. API Gateway and original-photo S3 CORS allow the hosted origin
+and `http://localhost:5173`. Cognito uses direct token authentication, so this
+deployment does not add OAuth callback URLs.
+
+To publish later frontend changes, build with the production public Vite settings,
+upload assets first, then upload `index.html` without caching:
+
+```sh
+npm run build
+aws s3 sync dist/ s3://ai-personal-memory-web-webbucket-gscxygrgjqvl/ --exclude index.html --cache-control 'public,max-age=31536000,immutable' --profile m15-deploy --region ap-southeast-2
+aws s3 cp dist/index.html s3://ai-personal-memory-web-webbucket-gscxygrgjqvl/index.html --cache-control 'no-cache,no-store,must-revalidate' --content-type 'text/html; charset=utf-8' --profile m15-deploy --region ap-southeast-2
+aws cloudfront create-invalidation --distribution-id E3RHZGLPP9XWSI --paths '/index.html' '/' --profile m15-deploy
+```
+
+Keep old hashed assets for open browser sessions. Frontend hosting does not
+require running Vite or Docker on the user's computer. Backend changes still
+require a separate Lambda image deployment.
+
 This is a separate React web client. It uses the existing Cognito user pool and
 API Gateway URL; it does not modify or share native-only Expo storage and image
 handling. It supports sign-in, Memory list/search, manual create/edit/delete,
@@ -20,9 +45,8 @@ browser bundle.
 ## Cloud prerequisite
 
 The browser calls Cognito and the API Gateway directly. The current API Gateway
-allows `http://localhost:5173` and the required `Authorization` and
-`Content-Type` headers for manual Memory CRUD. A future hosted Web deployment
-must allow its exact origin too. The CloudFormation template accepts `WebOrigin`
+allows the hosted origin and `http://localhost:5173`, including PUT requests and
+the required `Authorization` and `Content-Type` headers. The backend preparation template accepts `WebOrigin`
 for both API Gateway and S3 upload CORS, and defines the unauthenticated preflight
 route.
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { API_URL, createImageMemory, readMemoryImage, request, uploadMemoryImage } from "./api";
 import type { Memory, VisionDraft, VisionEnvelope } from "./api";
-import { getIdentityToken, restoreSession, signIn, signOut, sendEmailVerificationCode, confirmEmailVerification } from "./auth";
+import { getIdentityToken, restoreSession, signIn, signOut, sendEmailVerificationCode, confirmEmailVerification, register, confirmRegistration, resendRegistrationCode } from "./auth";
 
 type Draft = { title: string; original_text: string; category: string; tags: string };
 const blankDraft: Draft = { title: "", original_text: "", category: "", tags: "" };
@@ -36,6 +36,8 @@ export default function App() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [authMode, setAuthMode] = useState<"signin" | "signup" | "confirm">("signin");
+  const [registrationCode, setRegistrationCode] = useState("");
   const [memories, setMemories] = useState<Memory[]>([]);
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState<Draft>(blankDraft);
@@ -70,7 +72,19 @@ export default function App() {
 
   async function handleSignIn(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError("");
-    try { await signIn(username.trim(), password); setPassword(""); setSignedIn(true); await loadMemories(); }
+    try {
+      if (authMode === "signup") {
+        const confirmed = await register(username.trim(), password);
+        setPassword(""); setAuthMode(confirmed ? "signin" : "confirm");
+        setNotice(confirmed ? "Account created. Sign in to continue." : "Check your email for a verification code.");
+        return;
+      }
+      if (authMode === "confirm") {
+        await confirmRegistration(username.trim(), registrationCode.trim());
+        setRegistrationCode(""); setAuthMode("signin"); setNotice("Email verified. Sign in to continue.");
+        return;
+      }
+      await signIn(username.trim(), password); setPassword(""); setSignedIn(true); await loadMemories(); }
     catch (e) { setError(e instanceof Error ? e.message : "Sign-in failed."); }
     finally { setBusy(false); }
   }
@@ -259,12 +273,23 @@ export default function App() {
       <div className="brand-mark">M</div>
       <p className="eyebrow">YOUR PRIVATE LIBRARY</p>
       <h1>Keep important things close.</h1>
-      <p className="muted">Sign in to access your saved documents and notes.</p>
+      <p className="muted">{authMode === "signup" ? "Create an account with your email address." : authMode === "confirm" ? "Verify your email using the code we sent." : "Sign in to access your saved documents and notes."}</p>
       <form onSubmit={handleSignIn} className="form-stack">
         <label>Email or username<input autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required /></label>
-        <label>Password<input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
+        {authMode !== "confirm" && <label>Password<input type="password" autoComplete={authMode === "signup" ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} required /></label>}
+        {authMode === "signup" && <p className="muted small-copy">Use at least 12 characters, including uppercase, lowercase, numbers and symbols.</p>}
+        {authMode === "confirm" && <label>Verification code<input autoComplete="one-time-code" value={registrationCode} onChange={(e) => setRegistrationCode(e.target.value)} required /></label>}
         {error && <p className="error" role="alert">{error}</p>}
-        <button className="primary-button" disabled={busy}>{busy ? "Signing in…" : "Sign in securely"}</button>
+        {notice && <p role="status">{notice}</p>}
+        <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : authMode === "signup" ? "Create account" : authMode === "confirm" ? "Verify email" : "Sign in securely"}</button>
+        {authMode === "confirm" && <button type="button" className="quiet-button" disabled={busy} onClick={async () => {
+          setBusy(true); setError("");
+          try { await resendRegistrationCode(username.trim()); setNotice("A new verification code was sent."); }
+          catch (e) { setError(e instanceof Error ? e.message : "Could not resend code."); }
+          finally { setBusy(false); }
+        }}>Resend verification code</button>}
+        <button type="button" className="quiet-button" disabled={busy} onClick={() => { setAuthMode(authMode === "signin" ? "signup" : "signin"); setPassword(""); setError(""); setNotice(""); }}>{authMode === "signin" ? "Create an account" : "Back to sign in"}</button>
+        {authMode === "signin" && <button type="button" className="quiet-button" disabled={busy} onClick={() => { setAuthMode("confirm"); setError(""); setNotice(""); }}>Verify an existing account</button>}
       </form>
       <p className="privacy-note">Your password is sent directly to Amazon Cognito and is never saved by this app.</p>
     </section>
