@@ -129,7 +129,7 @@ async function registrationCall(target: string, body: Record<string, unknown>) {
     body: JSON.stringify({ ClientId: appClient, ...body }),
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.message || "Registration could not be completed.");
+  if (!response.ok) throw new Error(payload.message || "The account request could not be completed.");
   return payload;
 }
 export async function register(email: string, password: string): Promise<boolean> {
@@ -141,4 +141,12 @@ export async function confirmRegistration(email: string, code: string) {
 }
 export async function resendRegistrationCode(email: string) {
   await registrationCall("ResendConfirmationCode", { Username: email });
+}
+
+export async function requestPasswordReset(username: string) {
+  await registrationCall("ForgotPassword", { Username: username });
+}
+
+export async function confirmPasswordReset(username: string, code: string, password: string) {
+  await registrationCall("ConfirmForgotPassword", { Username: username, ConfirmationCode: code, Password: password });
 }

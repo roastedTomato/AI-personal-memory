@@ -1,8 +1,11 @@
+import MemoryChat from "./MemoryChat";
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { API_URL, createImageMemory, readMemoryImage, request, uploadMemoryImage } from "./api";
 import type { Memory, VisionDraft, VisionEnvelope } from "./api";
-import { getIdentityToken, restoreSession, signIn, signOut, sendEmailVerificationCode, confirmEmailVerification, register, confirmRegistration, resendRegistrationCode } from "./auth";
+import { getIdentityToken, restoreSession, signIn, signOut, sendEmailVerificationCode, confirmEmailVerification, register, confirmRegistration, resendRegistrationCode, requestPasswordReset, confirmPasswordReset } from "./auth";
+
+import { documentFields, fieldLabels, readJson, memoryFields, reminderSuggestion, memorySaveRequest, filterMemories } from "./memoryFields";
 
 type Draft = { title: string; original_text: string; category: string; tags: string };
 const blankDraft: Draft = { title: "", original_text: "", category: "", tags: "" };
@@ -36,9 +39,12 @@ export default function App() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [authMode, setAuthMode] = useState<"signin" | "signup" | "confirm">("signin");
+  const [authMode, setAuthMode] = useState<"signin" | "signup" | "confirm" | "forgot" | "reset">("signin");
   const [registrationCode, setRegistrationCode] = useState("");
   const [memories, setMemories] = useState<Memory[]>([]);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [detailMemory, setDetailMemory] = useState<Memory | null>(null);
+  const [savedFields, setSavedFields] = useState<VisionDraft>(memoryFields());
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState<Draft>(blankDraft);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -57,6 +63,21 @@ export default function App() {
   const [reminderTime, setReminderTime] = useState("");
   const [reminderBusy, setReminderBusy] = useState(false);
 
+  const visibleMemories = filterMemories(memories, selectedTags);
+  const tags = [...new Set(memories.flatMap((memory) => memory.tags))].sort();
+  function resetEditor() {
+    setEditingId(null); setEditingMemory(null); setDraft(blankDraft); setSavedFields(memoryFields());
+    setVisionReview(null); setSelectedImage(null); setOcrText(""); setOcrStarted(false);
+    setImagePendingConfirmation(false); setOcrEditedAfterAnalysis(false); setReminderDay(""); setReminderTime("");
+  }
+  function useReminderSuggestion() {
+    const suggestion = reminderSuggestion(visionReview?.draft ?? savedFields);
+    if (suggestion) { setReminderDay(suggestion.day); setReminderTime(suggestion.time); }
+  }
+  useEffect(() => {
+    if (detailMemory) document.getElementById("memory-detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [detailMemory]);
+
   const loadMemories = useCallback(async (term = "") => {
     setBusy(true);
     try { setMemories(await request<Memory[]>(`/memories${term.trim() ? `?q=${encodeURIComponent(term.trim())}` : ""}`)); }
@@ -73,6 +94,14 @@ export default function App() {
   async function handleSignIn(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError("");
     try {
+      if (authMode === "forgot") {
+        await requestPasswordReset(username.trim()); setAuthMode("reset"); setRegistrationCode("");
+        setNotice("If your account can be recovered, a reset code will be sent to your email."); return;
+      }
+      if (authMode === "reset") {
+        await confirmPasswordReset(username.trim(), registrationCode.trim(), password);
+        setAuthMode("signin"); setPassword(""); setRegistrationCode(""); setNotice("Password reset. Sign in with your new password."); return;
+      }
       if (authMode === "signup") {
         const confirmed = await register(username.trim(), password);
         setPassword(""); setAuthMode(confirmed ? "signin" : "confirm");
@@ -98,17 +127,16 @@ export default function App() {
           title: draft.title.trim(), text: ocrText.trim(), source_image_path: editingMemory.source_image_path,
           draft_id: visionReview?.draft_id ?? null, draft: visionReview?.draft ?? null,
         }) });
-        setEditingMemory(null); setEditingId(null); setImagePendingConfirmation(false); setVisionReview(null); setSelectedImage(null);
-        setDraft(blankDraft); setOcrText(""); setOcrStarted(false); setNotice("Photo details confirmed and saved."); await loadMemories(query);
+        resetEditor(); setNotice("Photo details confirmed and saved."); await loadMemories(query);
       } catch (e) { setError(e instanceof Error ? e.message : "Could not confirm and save the photo details."); }
       finally { setBusy(false); }
       return;
     }
-    const body = { title: draft.title.trim(), original_text: draft.original_text.trim(), confirmed_content: editingMemory && draft.original_text.trim() === editingMemory.original_text ? editingMemory.confirmed_content : draft.original_text.trim(), category: draft.category.trim() || null, tags: draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean) };
+    const saveRequest = memorySaveRequest(editingMemory, draft.title, draft.original_text, draft.category,
+      draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean), savedFields);
     try {
-      const saved = await (editingId === null
-        ? request<Memory>("/memories", { method: "POST", body: JSON.stringify(body) })
-        : request<Memory>(`/memories/${editingId}`, { method: "PATCH", body: JSON.stringify(body) }));
+      const saved = await request<Memory>(saveRequest.path, { method: saveRequest.method, body: JSON.stringify(saveRequest.body) });
+      setEditingId(saved.id); setEditingMemory(saved);
       const reminderChanged = Boolean(reminderDay || reminderTime) &&
         (reminderDay !== localDatePart(editingMemory?.reminder_at ?? null) || reminderTime !== localTimePart(editingMemory?.reminder_at ?? null));
       if (reminderChanged) {
@@ -120,18 +148,21 @@ export default function App() {
           return;
         }
       }
-      setDraft(blankDraft); setEditingId(null); setEditingMemory(null); setSelectedImage(null); setReminderDay(""); setReminderTime(""); setNotice(reminderChanged ? "Memory and email reminder saved." : "Memory saved."); await loadMemories(query);
+      resetEditor(); setNotice(reminderChanged ? "Memory and email reminder saved." : "Memory saved."); await loadMemories(query);
     } catch (e) { setError(e instanceof Error ? e.message : "Could not save this Memory."); }
     finally { setBusy(false); }
   }
 
   function startEdit(memory: Memory) {
+    if (busy || imageBusy || reminderBusy) return;
+    setDetailMemory(null);
+    setSavedFields(memoryFields(memory));
     setEditingId(memory.id);
     setEditingMemory(memory);
     setSelectedImage(null);
-    const pending = memory.vision_draft ? JSON.parse(memory.vision_draft) as VisionEnvelope : null;
+    const pending = readJson<VisionEnvelope>(memory.vision_draft);
     setVisionReview(pending);
-    const recognized = memory.image_text_draft ? JSON.parse(memory.image_text_draft) as { text?: string } : null;
+    const recognized = readJson<{ text?: string }>(memory.image_text_draft);
     const recoveredText = pending?.reviewed_text ?? memory.confirmed_image_text ?? recognized?.text ?? memory.ocr_text ?? "";
     setOcrText(recoveredText);
     setDraft({ title: memory.title, original_text: memory.confirmation_status === "draft" || pending ? (memory.original_text || recoveredText) : (memory.confirmed_content || memory.original_text), category: memory.category ?? "", tags: memory.tags.join(", ") });
@@ -147,7 +178,7 @@ export default function App() {
   async function removeMemory(memory: Memory) {
     if (!window.confirm(`Delete “${memory.title}”? This cannot be undone.`)) return;
     setBusy(true); setError("");
-    try { await request<null>(`/memories/${memory.id}`, { method: "DELETE" }); setNotice("Memory deleted."); await loadMemories(query); }
+    try { await request<null>(`/memories/${memory.id}`, { method: "DELETE" }); if (editingId === memory.id) resetEditor(); if (detailMemory?.id === memory.id) setDetailMemory(null); setNotice("Memory deleted."); await loadMemories(query); }
     catch (e) { setError(e instanceof Error ? e.message : "Could not delete this Memory."); }
     finally { setBusy(false); }
   }
@@ -212,7 +243,9 @@ export default function App() {
       });
       if (result.metadata?.status === "failed") throw new Error(`AI analysis failed (${result.metadata.error || "provider error"}). The photo and OCR text remain saved.`);
       if (!result.vision) throw new Error("The AI response did not contain a review draft.");
-      setVisionReview(result.vision); setNotice("AI draft ready. Check every field and accept or reject it.");
+      setVisionReview(result.vision);
+      setDraft((current) => ({ ...current, category: result.vision?.draft.category || "", tags: result.vision?.draft.tags.join(", ") || "" }));
+      setNotice("AI draft ready. Check every field and confirm to save.");
       setOcrEditedAfterAnalysis(false);
       const fresh = await request<Memory>(`/memories/${editingMemory.id}`); setEditingMemory(fresh); await loadMemories(query);
     } catch (e) { setError(e instanceof Error ? e.message : "AI analysis failed. The photo and OCR text remain saved."); }
@@ -264,7 +297,7 @@ export default function App() {
   }
 
   async function handleSignOut() {
-    await signOut(); setSignedIn(false); setMemories([]); setDraft(blankDraft); setEditingId(null); setEditingMemory(null); setSelectedImage(null); setError("");
+    await signOut(); setSignedIn(false); setMemories([]); resetEditor(); setDetailMemory(null); setSelectedTags([]); setQuery(""); setNotice(""); setError("");
   }
 
   if (checkingSession) return <main className="center-shell"><div className="spinner" aria-label="Checking session" /></main>;
@@ -274,14 +307,15 @@ export default function App() {
       <p className="eyebrow">YOUR PRIVATE LIBRARY</p>
       <h1>Keep important things close.</h1>
       <p className="muted">{authMode === "signup" ? "Create an account with your email address." : authMode === "confirm" ? "Verify your email using the code we sent." : "Sign in to access your saved documents and notes."}</p>
+      {(authMode === "forgot" || authMode === "reset") && <p className="muted">{authMode === "forgot" ? "Enter your account email to reset your password." : "Enter your email code and a new password."}</p>}
       <form onSubmit={handleSignIn} className="form-stack">
         <label>Email or username<input autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required /></label>
-        {authMode !== "confirm" && <label>Password<input type="password" autoComplete={authMode === "signup" ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} required /></label>}
-        {authMode === "signup" && <p className="muted small-copy">Use at least 12 characters, including uppercase, lowercase, numbers and symbols.</p>}
-        {authMode === "confirm" && <label>Verification code<input autoComplete="one-time-code" value={registrationCode} onChange={(e) => setRegistrationCode(e.target.value)} required /></label>}
+        {(authMode === "signin" || authMode === "signup" || authMode === "reset") && <label>Password<input type="password" autoComplete={authMode !== "signin" ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} required /></label>}
+        {(authMode === "signup" || authMode === "reset") && <p className="muted small-copy">Use at least 12 characters, including uppercase, lowercase, numbers and symbols.</p>}
+        {(authMode === "confirm" || authMode === "reset") && <label>Verification code<input autoComplete="one-time-code" value={registrationCode} onChange={(e) => setRegistrationCode(e.target.value)} required /></label>}
         {error && <p className="error" role="alert">{error}</p>}
         {notice && <p role="status">{notice}</p>}
-        <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : authMode === "signup" ? "Create account" : authMode === "confirm" ? "Verify email" : "Sign in securely"}</button>
+        <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : authMode === "signup" ? "Create account" : authMode === "confirm" ? "Verify email" : authMode === "forgot" ? "Send reset code" : authMode === "reset" ? "Reset password" : "Sign in securely"}</button>
         {authMode === "confirm" && <button type="button" className="quiet-button" disabled={busy} onClick={async () => {
           setBusy(true); setError("");
           try { await resendRegistrationCode(username.trim()); setNotice("A new verification code was sent."); }
@@ -289,6 +323,8 @@ export default function App() {
           finally { setBusy(false); }
         }}>Resend verification code</button>}
         <button type="button" className="quiet-button" disabled={busy} onClick={() => { setAuthMode(authMode === "signin" ? "signup" : "signin"); setPassword(""); setError(""); setNotice(""); }}>{authMode === "signin" ? "Create an account" : "Back to sign in"}</button>
+        {authMode === "signin" && <button type="button" className="quiet-button" disabled={busy} onClick={() => { setAuthMode("forgot"); setPassword(""); setError(""); setNotice(""); }}>Forgot password?</button>}
+        {authMode === "reset" && <button type="button" className="quiet-button" disabled={busy} onClick={() => { setAuthMode("forgot"); setPassword(""); setError(""); }}>Request another reset code</button>}
         {authMode === "signin" && <button type="button" className="quiet-button" disabled={busy} onClick={() => { setAuthMode("confirm"); setError(""); setNotice(""); }}>Verify an existing account</button>}
       </form>
       <p className="privacy-note">Your password is sent directly to Amazon Cognito and is never saved by this app.</p>
@@ -301,11 +337,25 @@ export default function App() {
       <div className="page-heading"><div><p className="eyebrow">YOUR PERSONAL LIBRARY</p><h1>Memories</h1><p className="muted">A calm place for the details you want to keep.</p></div><span className="count-pill">{memories.length} saved</span></div>
       {error && <div className="banner error-banner" role="alert">{error}</div>}
       {notice && <div className="banner success-banner" role="status">{notice}</div>}
+      <MemoryChat onOpenMemory={async (id) => { setDetailMemory(await request<Memory>(`/memories/${id}`)); }} />
+      {detailMemory && <section id="memory-detail" className="detail-panel" aria-label="Memory details">
+        <button className="quiet-button" onClick={() => setDetailMemory(null)}>Close details</button>
+        <h2>{detailMemory.title}</h2><p className="category">{detailMemory.category} · {detailMemory.confirmation_status}</p>
+        <h3>{detailMemory.confirmation_status === "draft" ? "Draft — review before saving" : "Summary"}</h3><p className="memory-copy">{detailMemory.confirmed_content || "No confirmed summary."}</p>
+        <dl className="detail-fields">{documentFields.map((key) => { const value = memoryFields(detailMemory)[key]; return value ? <div key={key}><dt>{fieldLabels[key]}</dt><dd>{value}</dd></div> : null; })}</dl>
+        <div className="tags">{detailMemory.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
+        {detailMemory.reminder_at && <p>{detailMemory.reminder_delivery === "email" ? "Email reminder" : "Mobile reminder"}: {new Date(detailMemory.reminder_at).toLocaleString("en-NZ")} · {detailMemory.reminder_delivery_status}</p>}
+        <details><summary>Original source text</summary><p className="memory-copy">{detailMemory.original_text || detailMemory.confirmed_image_text || detailMemory.ocr_text || "No source text."}</p></details>
+        <MemoryPhoto memory={detailMemory} large />
+        <button className="secondary-button" onClick={() => startEdit(detailMemory)}>Edit Memory</button>
+      </section>}
       <div className="columns">
         <section className="library-panel">
           <form className="search" onSubmit={(e) => { e.preventDefault(); void loadMemories(query); }}><span aria-hidden="true">⌕</span><input aria-label="Search Memories" placeholder="Search your library" value={query} onChange={(e) => setQuery(e.target.value)} /><button type="submit" disabled={busy}>Search</button></form>
-          {busy && memories.length === 0 ? <div className="empty">Loading your library…</div> : memories.length === 0 ? <div className="empty"><div className="empty-icon">✳</div><h2>Your library is ready</h2><p>Add a note or document detail using the form.</p></div> : <div className="memory-list">{memories.map((memory) => <article className="memory-card" key={memory.id}>
-            <div className="memory-icon">{(memory.category || "M").slice(0, 1).toUpperCase()}</div><div className="memory-main"><div className="memory-title-row"><h2>{memory.title}</h2><span className="date">{dateLabel(memory.created_at)}</span></div>{memory.category && <p className="category">{memory.category}</p>}<p className="memory-copy">{memory.confirmed_content || memory.original_text}</p>{memory.reminder_at && <p className="reminder-note">{memory.reminder_delivery === "email" ? "Email reminder" : "Mobile reminder"}: {new Date(memory.reminder_at).toLocaleString("en-NZ")}{memory.reminder_delivery_status ? ` · ${memory.reminder_delivery_status}` : ""}</p>}{memory.source_image_path && <MemoryPhoto memory={memory} />} {memory.tags.length > 0 && <div className="tags">{memory.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}<div className="card-actions"><button onClick={() => startEdit(memory)}>Edit</button><button className="delete-link" onClick={() => void removeMemory(memory)}>Delete</button></div></div>
+          <div className="tag-filters" aria-label="Filter by tags">{tags.map((tag) => <button key={tag} type="button" aria-pressed={selectedTags.includes(tag)} onClick={() => setSelectedTags((current) => current.includes(tag) ? current.filter((value) => value !== tag) : [...current, tag])}>{tag}</button>)}{selectedTags.length > 0 && <button onClick={() => setSelectedTags([])}>Clear filters</button>}</div>
+          {memories.length > 0 && visibleMemories.length === 0 && <p role="status">No Memories match these tags.</p>}
+          {busy && memories.length === 0 ? <div className="empty">Loading your library…</div> : memories.length === 0 ? <div className="empty"><div className="empty-icon">✳</div><h2>Your library is ready</h2><p>Add a note or document detail using the form.</p></div> : <div className="memory-list">{visibleMemories.map((memory) => <article className="memory-card" key={memory.id}>
+            <div className="memory-icon">{(memory.category || "M").slice(0, 1).toUpperCase()}</div><div className="memory-main"><div className="memory-title-row"><h2>{memory.title}</h2><span className="date">{dateLabel(memory.created_at)}</span></div>{memory.category && <p className="category">{memory.category}</p>}<p className="memory-copy">{memory.confirmed_content || memory.original_text}</p>{memory.reminder_at && <p className="reminder-note">{memory.reminder_delivery === "email" ? "Email reminder" : "Mobile reminder"}: {new Date(memory.reminder_at).toLocaleString("en-NZ")}{memory.reminder_delivery_status ? ` · ${memory.reminder_delivery_status}` : ""}</p>}{memory.source_image_path && <MemoryPhoto memory={memory} />} {memory.tags.length > 0 && <div className="tags">{memory.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}<div className="card-actions"><button disabled={busy || imageBusy || reminderBusy} onClick={async () => { try { setDetailMemory(await request<Memory>(`/memories/${memory.id}`)); } catch (e) { setError(e instanceof Error ? e.message : "Could not open Memory."); } }}>View details</button><button disabled={busy || imageBusy || reminderBusy} onClick={() => startEdit(memory)}>Edit</button><button disabled={busy || imageBusy || reminderBusy} className="delete-link" onClick={() => void removeMemory(memory)}>Delete</button></div></div>
           </article>)}</div>}
         </section>
         <aside className="editor-panel" id="memory-form"><p className="eyebrow">MANUAL ENTRY</p><h2>{editingId === null ? "Add a Memory" : "Edit Memory"}</h2><p className="muted small-copy">Manual saving works without AI.</p>
@@ -314,7 +364,11 @@ export default function App() {
             <label>{imagePendingConfirmation ? "Recognised text — review and correct" : "Details"}<textarea rows={6} value={draft.original_text} onChange={(e) => { setDraft({ ...draft, original_text: e.target.value }); if (imagePendingConfirmation) { setOcrText(e.target.value); if (visionReview) setOcrEditedAfterAnalysis(true); } }} placeholder="Write the details you want to remember" required /></label>
             <label>Category{imagePendingConfirmation ? <select value={draft.category} onChange={(e) => { setDraft({ ...draft, category: e.target.value }); if (visionReview) updateVisionDraft("category", (e.target.value || null) as VisionDraft["category"]); }}><option value="">Unclassified</option>{["bill", "receipt", "notice", "event", "appointment", "travel", "other"].map((category) => <option key={category} value={category}>{category}</option>)}</select> : <input maxLength={100} value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })} placeholder="Bill, receipt, notice…" />}</label>
             <label>Tags<input value={draft.tags} onChange={(e) => { setDraft({ ...draft, tags: e.target.value }); if (visionReview) updateVisionDraft("tags", e.target.value.split(",").map((tag) => tag.trim()).filter(Boolean)); }} placeholder="Separate tags with commas" /></label>
-            <label>Photo (JPEG, PNG, or WebP; up to 10 MB)<input type="file" accept="image/jpeg,image/png,image/webp" disabled={imageBusy} onChange={(e) => { const input = e.currentTarget; void handlePhotoSelection(input.files?.[0], input); }} /></label>
+            <label>Photo (JPEG, PNG, or WebP; up to 10 MB)<input type="file" accept="image/jpeg,image/png,image/webp" disabled={imageBusy || busy || reminderBusy} onChange={(e) => { const input = e.currentTarget; void handlePhotoSelection(input.files?.[0], input); }} /></label>
+            <label className="camera-entry">Take a photo<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={imageBusy || busy} onChange={(e) => { const input = e.currentTarget; void handlePhotoSelection(input.files?.[0], input); }} /></label>
+            {!imagePendingConfirmation && <fieldset className="structured-editor"><legend>Document fields</legend><div className="vision-fields">
+              {documentFields.filter((key) => editingMemory?.source_image_path || ["amount", "currency", "date", "due_date", "location_name"].includes(key)).map((key) => <label key={key}>{fieldLabels[key]}<input type={key === "date" || key === "due_date" ? "date" : key === "time" ? "time" : "text"} maxLength={key === "currency" ? 3 : undefined} value={savedFields[key] ?? ""} onChange={(e) => setSavedFields((current) => ({ ...current, [key]: e.target.value || null }))} /></label>)}
+            </div></fieldset>}
             {selectedImage && <p className="photo-selected">Selected: {selectedImage.name}</p>}
             {editingMemory?.source_image_path && !selectedImage && <div className="editor-photo"><p>Current photo</p><MemoryPhoto memory={editingMemory} large /></div>}
             {editingMemory?.source_image_path && <section className="ai-review-section">
@@ -324,7 +378,7 @@ export default function App() {
               {visionReview && <div className="vision-draft"><h4>AI suggestions · review required</h4>
                 <label>Summary<textarea rows={4} value={visionReview.draft.summary ?? ""} onChange={(e) => updateVisionDraft("summary", e.target.value || null)} /></label>
                 <div className="vision-fields">
-                  {(["amount", "currency", "date", "time", "due_date", "institution", "location_name", "location_address", "location_purpose"] as const).map((key) => <label key={key}>{({ amount: "Amount", currency: "Currency", date: "Date", time: "Time", due_date: "Due date", institution: "Institution", location_name: "Location", location_address: "Address", location_purpose: "Purpose" })[key]}<input type={key === "date" || key === "due_date" ? "date" : key === "time" ? "time" : "text"} maxLength={key === "currency" ? 3 : undefined} value={visionReview.draft[key] ?? ""} onChange={(e) => updateVisionDraft(key, e.target.value || null)} /></label>)}
+                  {documentFields.map((key) => <label key={key}>{fieldLabels[key]}<input type={key === "date" || key === "due_date" ? "date" : key === "time" ? "time" : "text"} maxLength={key === "currency" ? 3 : undefined} value={visionReview.draft[key] ?? ""} onChange={(e) => updateVisionDraft(key, e.target.value || null)} /></label>)}
                 </div>
                 {visionReview.draft.suggested_title && <button type="button" className="quiet-button" onClick={() => setDraft((current) => ({ ...current, title: visionReview.draft.suggested_title || current.title }))}>Use suggested title: {visionReview.draft.suggested_title}</button>}
                 {visionReview.draft.uncertain_fields.length > 0 && <p className="review-warning">Check uncertain fields: {visionReview.draft.uncertain_fields.join(", ")}</p>}
@@ -334,6 +388,7 @@ export default function App() {
             </section>}
             {editingId !== null && editingMemory && !imagePendingConfirmation && editingMemory.confirmation_status !== "draft" && <section className="email-reminder-section">
               <h3>Email reminder</h3>
+              {!editingMemory.reminder_at && reminderSuggestion(savedFields) && <button type="button" className="quiet-button" onClick={useReminderSuggestion}>Use document date as reminder suggestion</button>}
               {error.includes("verified Cognito email") && <button type="button" disabled={reminderBusy} onClick={async () => {
                 setReminderBusy(true);
                 try {
@@ -357,7 +412,7 @@ export default function App() {
             {error && <p className="error" role="alert">{error}</p>}
             {notice && <p role="status">{notice}</p>}
             <button className="primary-button" disabled={busy || imageBusy || reminderBusy}>{busy ? "Saving…" : imagePendingConfirmation ? "Confirm and save" : editingId === null ? "Save Memory" : "Save changes"}</button>
-            {editingId !== null && <button type="button" className="quiet-button cancel-button" onClick={() => { setEditingId(null); setEditingMemory(null); setDraft(blankDraft); setSelectedImage(null); }}>Cancel edit</button>}
+            {editingId !== null && <button type="button" className="quiet-button cancel-button" disabled={busy || imageBusy || reminderBusy} onClick={resetEditor}>Cancel edit</button>}
           </form>
         </aside>
       </div>

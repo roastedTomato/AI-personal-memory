@@ -60,3 +60,22 @@ short-lived signed reads. Native local notifications are not part of this Web
 slice. The Web UI also supports one-time email reminders, using the verified
 Cognito account email. Sending requires the backend email worker and a verified
 SES sender to be configured and deployed; the local UI alone does not send mail.
+
+## Web feature parity
+
+The web client includes read-only Memory details with original-source access,
+confirmed image field editing, manual amount/currency/date/location fields,
+combined keyword and tag filters, Cognito password recovery, and a separate
+camera capture input (desktop browsers may show a file picker).
+Reminder date suggestions require an explicit click and do not schedule mail
+until the user saves a date and time. Editing a confirmed image preserves the
+original text and image through the existing confirmed-image API.
+
+Validation: `npm test` and `npm run build` in `web/`. Tests use synthetic data
+and mock Cognito calls; they do not contact AWS or OpenAI. Production browser
+acceptance and actual password-reset email delivery remain separate checks.
+
+Ask your Memories is rendered above the library. It reuses `/memories/query`,
+requires explicit OpenAI consent, supports clarification replies and a new
+conversation, and opens cited Memories in the existing detail view. Chat history
+is session-only; it is cleared on sign-out and is not stored in browser storage.
