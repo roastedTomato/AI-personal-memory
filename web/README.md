@@ -79,3 +79,25 @@ Ask your Memories is rendered above the library. It reuses `/memories/query`,
 requires explicit OpenAI consent, supports clarification replies and a new
 conversation, and opens cited Memories in the existing detail view. Chat history
 is session-only; it is cleared on sign-out and is not stored in browser storage.
+
+Confirmed image edits also synchronize the queryable amount, currency, event date,
+due date and location columns in the same transaction. Explicit clears remain
+empty; uncertain values are not promoted to confirmed query columns. This update
+requires deploying both the frontend and backend, without a database migration.
+
+Password recovery: Sign in → Forgot password → request an email code → enter the
+code, new password and confirmation → return to sign in. The reset screen supports
+resending a code and changing the account; resend requests have a one-minute UI
+cooldown. Cognito handles code delivery and password changes directly. No backend
+or database changes are needed for password recovery.
+
+## Combined release
+
+From the project root run `python3 deployment/publish.py` with Docker running
+and the existing `m15-deploy` AWS profile available. It discovers the API Lambda
+from the production Vite API URL, validates the existing hosting resources, runs
+tests and builds, pushes a new ECR image, updates Lambda, uploads the website and
+waits for CloudFront invalidation. No resources or migrations are created. On a
+publishing failure it attempts to restore the prior homepage and Lambda image;
+review any reported rollback errors before retrying. The script requires network
+and Docker access and still needs a real deployment run and browser acceptance.

@@ -3,9 +3,9 @@ import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { API_URL, createImageMemory, readMemoryImage, request, uploadMemoryImage } from "./api";
 import type { Memory, VisionDraft, VisionEnvelope } from "./api";
-import { getIdentityToken, restoreSession, signIn, signOut, sendEmailVerificationCode, confirmEmailVerification, register, confirmRegistration, resendRegistrationCode, requestPasswordReset, confirmPasswordReset } from "./auth";
+import { getIdentityToken, restoreSession, signIn, signOut, sendEmailVerificationCode, confirmEmailVerification, register, confirmRegistration, resendRegistrationCode, requestPasswordReset, confirmPasswordReset, validateResetPassword } from "./auth";
 
-import { documentFields, fieldLabels, readJson, memoryFields, reminderSuggestion, memorySaveRequest, filterMemories } from "./memoryFields";
+import { documentFields, fieldLabels, readJson, memoryFields, reminderSuggestion, memorySaveRequest, filterMemories, availableTags } from "./memoryFields";
 
 type Draft = { title: string; original_text: string; category: string; tags: string };
 const blankDraft: Draft = { title: "", original_text: "", category: "", tags: "" };
@@ -40,6 +40,8 @@ export default function App() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [authMode, setAuthMode] = useState<"signin" | "signup" | "confirm" | "forgot" | "reset">("signin");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const [resetResendAt, setResetResendAt] = useState(0);
   const [registrationCode, setRegistrationCode] = useState("");
   const [memories, setMemories] = useState<Memory[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -64,7 +66,7 @@ export default function App() {
   const [reminderBusy, setReminderBusy] = useState(false);
 
   const visibleMemories = filterMemories(memories, selectedTags);
-  const tags = [...new Set(memories.flatMap((memory) => memory.tags))].sort();
+  const tags = availableTags(memories, selectedTags);
   function resetEditor() {
     setEditingId(null); setEditingMemory(null); setDraft(blankDraft); setSavedFields(memoryFields());
     setVisionReview(null); setSelectedImage(null); setOcrText(""); setOcrStarted(false);
@@ -77,6 +79,10 @@ export default function App() {
   useEffect(() => {
     if (detailMemory) document.getElementById("memory-detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [detailMemory]);
+
+  useEffect(() => {
+    if (editingId !== null && !detailMemory) document.getElementById("memory-form")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [editingId, detailMemory]);
 
   const loadMemories = useCallback(async (term = "") => {
     setBusy(true);
@@ -92,15 +98,17 @@ export default function App() {
   }, [loadMemories]);
 
   async function handleSignIn(event: FormEvent) {
-    event.preventDefault(); setBusy(true); setError("");
+    event.preventDefault(); setBusy(true); setError(""); setNotice("");
     try {
       if (authMode === "forgot") {
-        await requestPasswordReset(username.trim()); setAuthMode("reset"); setRegistrationCode("");
+        await requestPasswordReset(username.trim()); setAuthMode("reset"); setRegistrationCode(""); setPassword(""); setPasswordConfirmation(""); setResetResendAt(Date.now() + 60000);
         setNotice("If your account can be recovered, a reset code will be sent to your email."); return;
       }
       if (authMode === "reset") {
+        const validation = validateResetPassword(password, passwordConfirmation);
+        if (validation) throw new Error(validation);
         await confirmPasswordReset(username.trim(), registrationCode.trim(), password);
-        setAuthMode("signin"); setPassword(""); setRegistrationCode(""); setNotice("Password reset. Sign in with your new password."); return;
+        setAuthMode("signin"); setPassword(""); setPasswordConfirmation(""); setRegistrationCode(""); setNotice("Password reset. Sign in with your new password."); return;
       }
       if (authMode === "signup") {
         const confirmed = await register(username.trim(), password);
@@ -306,13 +314,13 @@ export default function App() {
       <div className="brand-mark">M</div>
       <p className="eyebrow">YOUR PRIVATE LIBRARY</p>
       <h1>Keep important things close.</h1>
-      <p className="muted">{authMode === "signup" ? "Create an account with your email address." : authMode === "confirm" ? "Verify your email using the code we sent." : "Sign in to access your saved documents and notes."}</p>
-      {(authMode === "forgot" || authMode === "reset") && <p className="muted">{authMode === "forgot" ? "Enter your account email to reset your password." : "Enter your email code and a new password."}</p>}
+      <p className="muted">{authMode === "signup" ? "Create an account with your email address." : authMode === "confirm" ? "Verify your email using the code we sent." : authMode === "forgot" ? "Reset your password using your account email." : authMode === "reset" ? "Enter the code from your email and choose a new password." : "Sign in to access your saved documents and notes."}</p>
       <form onSubmit={handleSignIn} className="form-stack">
-        <label>Email or username<input autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required /></label>
-        {(authMode === "signin" || authMode === "signup" || authMode === "reset") && <label>Password<input type="password" autoComplete={authMode !== "signin" ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} required /></label>}
+        <label>Email or username<input autoComplete="username" readOnly={authMode === "reset"} disabled={busy} value={username} onChange={(e) => setUsername(e.target.value)} required /></label>
+        {(authMode === "signin" || authMode === "signup" || authMode === "reset") && <label>{authMode === "reset" ? "New password" : "Password"}<input disabled={busy} type="password" autoComplete={authMode !== "signin" ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} required /></label>}
+        {authMode === "reset" && <label>Confirm new password<input type="password" autoComplete="new-password" disabled={busy} value={passwordConfirmation} onChange={(e) => setPasswordConfirmation(e.target.value)} required /></label>}
         {(authMode === "signup" || authMode === "reset") && <p className="muted small-copy">Use at least 12 characters, including uppercase, lowercase, numbers and symbols.</p>}
-        {(authMode === "confirm" || authMode === "reset") && <label>Verification code<input autoComplete="one-time-code" value={registrationCode} onChange={(e) => setRegistrationCode(e.target.value)} required /></label>}
+        {(authMode === "confirm" || authMode === "reset") && <label>Verification code<input disabled={busy} autoComplete="one-time-code" value={registrationCode} onChange={(e) => setRegistrationCode(e.target.value)} required /></label>}
         {error && <p className="error" role="alert">{error}</p>}
         {notice && <p role="status">{notice}</p>}
         <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : authMode === "signup" ? "Create account" : authMode === "confirm" ? "Verify email" : authMode === "forgot" ? "Send reset code" : authMode === "reset" ? "Reset password" : "Sign in securely"}</button>
@@ -322,9 +330,18 @@ export default function App() {
           catch (e) { setError(e instanceof Error ? e.message : "Could not resend code."); }
           finally { setBusy(false); }
         }}>Resend verification code</button>}
-        <button type="button" className="quiet-button" disabled={busy} onClick={() => { setAuthMode(authMode === "signin" ? "signup" : "signin"); setPassword(""); setError(""); setNotice(""); }}>{authMode === "signin" ? "Create an account" : "Back to sign in"}</button>
-        {authMode === "signin" && <button type="button" className="quiet-button" disabled={busy} onClick={() => { setAuthMode("forgot"); setPassword(""); setError(""); setNotice(""); }}>Forgot password?</button>}
-        {authMode === "reset" && <button type="button" className="quiet-button" disabled={busy} onClick={() => { setAuthMode("forgot"); setPassword(""); setError(""); }}>Request another reset code</button>}
+        <button type="button" className="quiet-button" disabled={busy} onClick={() => { setAuthMode(authMode === "signin" ? "signup" : "signin"); setPassword(""); setPasswordConfirmation(""); setRegistrationCode(""); setError(""); setNotice(""); }}>{authMode === "signin" ? "Create an account" : "Back to sign in"}</button>
+        {authMode === "signin" && <button type="button" className="quiet-button" disabled={busy} onClick={() => { setAuthMode("forgot"); setPassword(""); setPasswordConfirmation(""); setRegistrationCode(""); setError(""); setNotice(""); }}>Forgot password?</button>}
+        {authMode === "reset" && <>
+          <button type="button" className="quiet-button" disabled={busy} onClick={async () => {
+            if (Date.now() < resetResendAt) { setNotice("Please wait one minute after the previous request before requesting another code."); return; }
+            setBusy(true); setError(""); setNotice("");
+            try { await requestPasswordReset(username.trim()); setRegistrationCode(""); setResetResendAt(Date.now() + 60000); setNotice("If your account can be recovered, a new code will be sent. Use the latest code."); }
+            catch (e) { setError(e instanceof Error ? e.message : "Could not request a new code."); }
+            finally { setBusy(false); }
+          }}>Resend reset code</button>
+          <button type="button" className="quiet-button" disabled={busy} onClick={() => { setAuthMode("forgot"); setPassword(""); setPasswordConfirmation(""); setRegistrationCode(""); setError(""); setNotice(""); }}>Use a different email or username</button>
+        </>}
         {authMode === "signin" && <button type="button" className="quiet-button" disabled={busy} onClick={() => { setAuthMode("confirm"); setError(""); setNotice(""); }}>Verify an existing account</button>}
       </form>
       <p className="privacy-note">Your password is sent directly to Amazon Cognito and is never saved by this app.</p>
@@ -337,37 +354,40 @@ export default function App() {
       <div className="page-heading"><div><p className="eyebrow">YOUR PERSONAL LIBRARY</p><h1>Memories</h1><p className="muted">A calm place for the details you want to keep.</p></div><span className="count-pill">{memories.length} saved</span></div>
       {error && <div className="banner error-banner" role="alert">{error}</div>}
       {notice && <div className="banner success-banner" role="status">{notice}</div>}
-      <MemoryChat onOpenMemory={async (id) => { setDetailMemory(await request<Memory>(`/memories/${id}`)); }} />
+      <div hidden={Boolean(detailMemory)}><MemoryChat onOpenMemory={async (id) => { setDetailMemory(await request<Memory>(`/memories/${id}`)); }} /></div>
       {detailMemory && <section id="memory-detail" className="detail-panel" aria-label="Memory details">
-        <button className="quiet-button" onClick={() => setDetailMemory(null)}>Close details</button>
+        <button className="quiet-button" onClick={() => setDetailMemory(null)}>Back to Memories</button>
         <h2>{detailMemory.title}</h2><p className="category">{detailMemory.category} · {detailMemory.confirmation_status}</p>
         <h3>{detailMemory.confirmation_status === "draft" ? "Draft — review before saving" : "Summary"}</h3><p className="memory-copy">{detailMemory.confirmed_content || "No confirmed summary."}</p>
         <dl className="detail-fields">{documentFields.map((key) => { const value = memoryFields(detailMemory)[key]; return value ? <div key={key}><dt>{fieldLabels[key]}</dt><dd>{value}</dd></div> : null; })}</dl>
         <div className="tags">{detailMemory.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
         {detailMemory.reminder_at && <p>{detailMemory.reminder_delivery === "email" ? "Email reminder" : "Mobile reminder"}: {new Date(detailMemory.reminder_at).toLocaleString("en-NZ")} · {detailMemory.reminder_delivery_status}</p>}
         <details><summary>Original source text</summary><p className="memory-copy">{detailMemory.original_text || detailMemory.confirmed_image_text || detailMemory.ocr_text || "No source text."}</p></details>
+        {detailMemory.confirmed_image_text && detailMemory.original_text && detailMemory.confirmed_image_text !== detailMemory.original_text && <details><summary>Reviewed image text</summary><p className="memory-copy">{detailMemory.confirmed_image_text}</p></details>}
+        <p className="muted small-copy">Created {dateLabel(detailMemory.created_at)} · Updated {dateLabel(detailMemory.updated_at)}</p>
         <MemoryPhoto memory={detailMemory} large />
         <button className="secondary-button" onClick={() => startEdit(detailMemory)}>Edit Memory</button>
       </section>}
-      <div className="columns">
+      <div className="columns" hidden={Boolean(detailMemory)}>
         <section className="library-panel">
           <form className="search" onSubmit={(e) => { e.preventDefault(); void loadMemories(query); }}><span aria-hidden="true">⌕</span><input aria-label="Search Memories" placeholder="Search your library" value={query} onChange={(e) => setQuery(e.target.value)} /><button type="submit" disabled={busy}>Search</button></form>
           <div className="tag-filters" aria-label="Filter by tags">{tags.map((tag) => <button key={tag} type="button" aria-pressed={selectedTags.includes(tag)} onClick={() => setSelectedTags((current) => current.includes(tag) ? current.filter((value) => value !== tag) : [...current, tag])}>{tag}</button>)}{selectedTags.length > 0 && <button onClick={() => setSelectedTags([])}>Clear filters</button>}</div>
           {memories.length > 0 && visibleMemories.length === 0 && <p role="status">No Memories match these tags.</p>}
-          {busy && memories.length === 0 ? <div className="empty">Loading your library…</div> : memories.length === 0 ? <div className="empty"><div className="empty-icon">✳</div><h2>Your library is ready</h2><p>Add a note or document detail using the form.</p></div> : <div className="memory-list">{visibleMemories.map((memory) => <article className="memory-card" key={memory.id}>
+          {busy && memories.length === 0 ? <div className="empty">Loading your library…</div> : memories.length === 0 ? <div className="empty"><div className="empty-icon">✳</div><h2>{query.trim() ? "No matching Memories" : "Your library is ready"}</h2><p>{query.trim() ? "Try a different keyword or clear your search." : "Add a note or document detail using the form."}</p></div> : <div className="memory-list">{visibleMemories.map((memory) => <article className="memory-card" key={memory.id}>
             <div className="memory-icon">{(memory.category || "M").slice(0, 1).toUpperCase()}</div><div className="memory-main"><div className="memory-title-row"><h2>{memory.title}</h2><span className="date">{dateLabel(memory.created_at)}</span></div>{memory.category && <p className="category">{memory.category}</p>}<p className="memory-copy">{memory.confirmed_content || memory.original_text}</p>{memory.reminder_at && <p className="reminder-note">{memory.reminder_delivery === "email" ? "Email reminder" : "Mobile reminder"}: {new Date(memory.reminder_at).toLocaleString("en-NZ")}{memory.reminder_delivery_status ? ` · ${memory.reminder_delivery_status}` : ""}</p>}{memory.source_image_path && <MemoryPhoto memory={memory} />} {memory.tags.length > 0 && <div className="tags">{memory.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}<div className="card-actions"><button disabled={busy || imageBusy || reminderBusy} onClick={async () => { try { setDetailMemory(await request<Memory>(`/memories/${memory.id}`)); } catch (e) { setError(e instanceof Error ? e.message : "Could not open Memory."); } }}>View details</button><button disabled={busy || imageBusy || reminderBusy} onClick={() => startEdit(memory)}>Edit</button><button disabled={busy || imageBusy || reminderBusy} className="delete-link" onClick={() => void removeMemory(memory)}>Delete</button></div></div>
           </article>)}</div>}
         </section>
         <aside className="editor-panel" id="memory-form"><p className="eyebrow">MANUAL ENTRY</p><h2>{editingId === null ? "Add a Memory" : "Edit Memory"}</h2><p className="muted small-copy">Manual saving works without AI.</p>
           <form className="form-stack" onSubmit={handleSave} onInvalidCapture={() => setError("Please complete the required Title and Details fields before saving.")}>
             <label>Title<input maxLength={200} value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="e.g. Power bill — November" required /></label>
-            <label>{imagePendingConfirmation ? "Recognised text — review and correct" : "Details"}<textarea rows={6} value={draft.original_text} onChange={(e) => { setDraft({ ...draft, original_text: e.target.value }); if (imagePendingConfirmation) { setOcrText(e.target.value); if (visionReview) setOcrEditedAfterAnalysis(true); } }} placeholder="Write the details you want to remember" required /></label>
+            <label>{imagePendingConfirmation ? "Recognised text — review and correct" : editingMemory?.source_image_path ? "Summary" : "Details"}<textarea rows={6} value={draft.original_text} onChange={(e) => { setDraft({ ...draft, original_text: e.target.value }); if (imagePendingConfirmation) { setOcrText(e.target.value); if (visionReview) setOcrEditedAfterAnalysis(true); } }} placeholder="Write the details you want to remember" required /></label>
             <label>Category{imagePendingConfirmation ? <select value={draft.category} onChange={(e) => { setDraft({ ...draft, category: e.target.value }); if (visionReview) updateVisionDraft("category", (e.target.value || null) as VisionDraft["category"]); }}><option value="">Unclassified</option>{["bill", "receipt", "notice", "event", "appointment", "travel", "other"].map((category) => <option key={category} value={category}>{category}</option>)}</select> : <input maxLength={100} value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })} placeholder="Bill, receipt, notice…" />}</label>
             <label>Tags<input value={draft.tags} onChange={(e) => { setDraft({ ...draft, tags: e.target.value }); if (visionReview) updateVisionDraft("tags", e.target.value.split(",").map((tag) => tag.trim()).filter(Boolean)); }} placeholder="Separate tags with commas" /></label>
             <label>Photo (JPEG, PNG, or WebP; up to 10 MB)<input type="file" accept="image/jpeg,image/png,image/webp" disabled={imageBusy || busy || reminderBusy} onChange={(e) => { const input = e.currentTarget; void handlePhotoSelection(input.files?.[0], input); }} /></label>
-            <label className="camera-entry">Take a photo<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={imageBusy || busy} onChange={(e) => { const input = e.currentTarget; void handlePhotoSelection(input.files?.[0], input); }} /></label>
-            {!imagePendingConfirmation && <fieldset className="structured-editor"><legend>Document fields</legend><div className="vision-fields">
-              {documentFields.filter((key) => editingMemory?.source_image_path || ["amount", "currency", "date", "due_date", "location_name"].includes(key)).map((key) => <label key={key}>{fieldLabels[key]}<input type={key === "date" || key === "due_date" ? "date" : key === "time" ? "time" : "text"} maxLength={key === "currency" ? 3 : undefined} value={savedFields[key] ?? ""} onChange={(e) => setSavedFields((current) => ({ ...current, [key]: e.target.value || null }))} /></label>)}
+            <label className="camera-entry">Take a photo<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={imageBusy || busy || reminderBusy} onChange={(e) => { const input = e.currentTarget; void handlePhotoSelection(input.files?.[0], input); }} /></label>
+            <p className="muted small-copy">On a phone, Take a photo opens the camera when supported. Desktop browsers may show a file picker.</p>
+            {!imagePendingConfirmation && <fieldset className="structured-editor" disabled={busy || imageBusy || reminderBusy}><legend>{editingMemory ? "Saved document fields" : "Document fields"}</legend><p className="muted small-copy">Review and edit these values without running AI again.</p><div className="vision-fields">
+              {documentFields.filter((key) => editingMemory?.source_image_path || ["amount", "currency", "date", "due_date", "location_name"].includes(key)).map((key) => <label key={key}>{fieldLabels[key]}<input type={key === "date" || key === "due_date" ? "date" : key === "time" ? "time" : "text"} maxLength={key === "currency" ? 3 : undefined} value={savedFields[key] ?? ""} onChange={(e) => setSavedFields((current) => ({ ...current, [key]: key === "currency" ? e.target.value.toUpperCase() || null : e.target.value || null, uncertain_fields: current.uncertain_fields.filter((field) => field !== key) }))} /></label>)}
             </div></fieldset>}
             {selectedImage && <p className="photo-selected">Selected: {selectedImage.name}</p>}
             {editingMemory?.source_image_path && !selectedImage && <div className="editor-photo"><p>Current photo</p><MemoryPhoto memory={editingMemory} large /></div>}
@@ -388,7 +408,7 @@ export default function App() {
             </section>}
             {editingId !== null && editingMemory && !imagePendingConfirmation && editingMemory.confirmation_status !== "draft" && <section className="email-reminder-section">
               <h3>Email reminder</h3>
-              {!editingMemory.reminder_at && reminderSuggestion(savedFields) && <button type="button" className="quiet-button" onClick={useReminderSuggestion}>Use document date as reminder suggestion</button>}
+              {!editingMemory.reminder_at && reminderSuggestion(savedFields) && <button type="button" className="quiet-button" onClick={useReminderSuggestion}>Use suggested date: {reminderSuggestion(savedFields)?.day}</button>}
               {error.includes("verified Cognito email") && <button type="button" disabled={reminderBusy} onClick={async () => {
                 setReminderBusy(true);
                 try {
@@ -407,7 +427,7 @@ export default function App() {
               <label>Date<input type="date" value={reminderDay} onChange={(e) => setReminderDay(e.target.value)} /></label>
               <label>Time<input type="time" value={reminderTime} onChange={(e) => setReminderTime(e.target.value)} /></label>
               <div className="review-actions"><button type="button" className="secondary-button" disabled={reminderBusy || !reminderDay || !reminderTime} onClick={() => void saveEmailReminder()}>{reminderBusy ? "Saving…" : editingMemory.reminder_delivery === "email" ? "Update email reminder" : "Schedule email reminder"}</button>{editingMemory.reminder_delivery === "email" && <button type="button" className="quiet-button" disabled={reminderBusy} onClick={() => void cancelEmailReminder()}>Cancel reminder</button>}</div>
-              <p className="muted small-copy">Sent to the verified email address on your Cognito account.</p>
+              <p className="muted small-copy">Sent to your verified account email. Suggested dates are not scheduled until you choose a time and save.</p>
             </section>}
             {error && <p className="error" role="alert">{error}</p>}
             {notice && <p role="status">{notice}</p>}

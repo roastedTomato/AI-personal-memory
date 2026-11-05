@@ -37,7 +37,7 @@ def test_image_endpoint_versions_cache_and_ownership(monkeypatch, tmp_path):
     params = {"variant": "thumbnail", "v": created["source_image_path"].split("/")[-1]}
     response = client.get(url, params=params)
     assert response.status_code == 200
-    assert response.headers["cache-control"] == "private, max-age=86400"
+    assert response.headers["cache-control"] == "private, max-age=86400, immutable"
     assert client.get(url, params=params, headers={"If-None-Match": response.headers["etag"]}).status_code == 304
     assert client.get(url).content == stream.getvalue()
     assert client.get(url, params={"variant": "invalid"}).status_code == 422

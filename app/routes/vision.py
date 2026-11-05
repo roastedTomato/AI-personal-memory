@@ -2,7 +2,8 @@ import hashlib
 import json
 import os
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from threading import Lock
 from typing import Annotated, Literal
 from uuid import uuid4
@@ -258,6 +259,13 @@ def update_confirmed_image(memory_id: int, payload: ConfirmedImageUpdate, db: Da
         memory.confirmed_vision = cleaned.model_dump_json()
         memory.category = cleaned.category
         memory.tags = json.dumps(cleaned.tags)
+        # Keep queryable columns consistent with the fields explicitly reviewed here.
+        uncertain = set(cleaned.uncertain_fields)
+        memory.amount = Decimal(cleaned.amount) if cleaned.amount is not None and "amount" not in uncertain else None
+        memory.currency = cleaned.currency if "currency" not in uncertain else None
+        memory.event_date = date.fromisoformat(cleaned.date) if cleaned.date and "date" not in uncertain else None
+        memory.due_date = date.fromisoformat(cleaned.due_date) if cleaned.due_date and "due_date" not in uncertain else None
+        memory.location = cleaned.location_name if "location_name" not in uncertain else None
     db.commit(); db.refresh(memory)
     refresh_embedding_safely(memory)
     db.refresh(memory)

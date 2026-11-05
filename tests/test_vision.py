@@ -517,3 +517,34 @@ def test_ai_title_only_saves_after_confirmation(monkeypatch, tmp_path):
     saved = client.post(base + "/image/finalize", json={"title": "用户修改的标题", "source_image_path": memory["source_image_path"], "draft_id": result["vision"]["draft_id"], "draft": result["vision"]["draft"]}).json()
     assert saved["title"] == "用户修改的标题"
     assert saved["confirmed_content"] == DRAFT["summary"]
+
+
+def test_confirmed_edit_synchronizes_query_fields_and_explicit_clears(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.routes import images
+    monkeypatch.setattr(images, "UPLOAD_DIR", tmp_path)
+    client = TestClient(app)
+    memory = client.post("/memories", json={"title": "Synthetic", "original_text": "Preserved source", "confirmed_content": "Summary", "amount": "99", "currency": "NZD", "event_date": "2026-01-01", "location": "Old location"}).json()
+    mid = memory["id"]
+    uploaded = client.post(f"/memories/{mid}/image", files={"image": ("synthetic.png", b"synthetic", "image/png")}).json()
+    # Attaching an image preserves the record; explicitly confirm before editing.
+    client.post(f"/memories/{mid}/image/finalize", json={"title": "Synthetic", "text": "Reviewed source", "source_image_path": uploaded["source_image_path"]})
+    draft = {**DRAFT, "amount": "0", "currency": "NZD", "date": "2027-02-03", "due_date": "2027-02-04", "location_name": "Hamilton", "uncertain_fields": []}
+    path = f"/memories/{mid}/image/confirmed"
+    result = client.patch(path, json={"title": "Edited", "confirmed_content": "Reviewed summary", "draft": draft})
+    assert result.status_code == 200
+    saved = client.get(f"/memories/{mid}").json()
+    assert saved["amount"] == "0.00"
+    assert saved["event_date"] == "2027-02-03"
+    assert saved["due_date"] == "2027-02-04"
+    assert saved["location"] == "Hamilton"
+    assert saved["original_text"] == "Preserved source"
+    assert saved["source_image_path"] == uploaded["source_image_path"]
+    cleared = {**draft, **{key: None for key in ("amount", "currency", "date", "due_date", "location_name")}}
+    assert client.patch(path, json={"title": "Cleared", "confirmed_content": "Summary", "draft": cleared}).status_code == 200
+    saved = client.get(f"/memories/{mid}").json()
+    assert all(saved[key] is None for key in ("amount", "currency", "event_date", "due_date", "location"))
+    uncertain = {**draft, "uncertain_fields": ["amount", "date", "location_name"]}
+    saved = client.patch(path, json={"title": "Uncertain", "confirmed_content": "Summary", "draft": uncertain}).json()
+    assert saved["amount"] is None and saved["event_date"] is None and saved["location"] is None

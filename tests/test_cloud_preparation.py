@@ -103,7 +103,11 @@ def test_pending_upload_owner_validation_and_immutable_promotion(cloud_api, monk
     assert s3.puts[0]['Body'] == data
     assert s3.puts[0]['Key'] != s3.signed['Key']
     assert cloud_api.post(base+'/uploads/complete', json={'upload_id': uid}, headers=headers()).status_code == 200
-    assert len(s3.puts) == 1
+    originals = [item for item in s3.puts if '/originals/' in item['Key']]
+    assert len(originals) == 1
+    thumbnails = [item for item in s3.puts if '/derivatives/' in item['Key']]
+    assert len(thumbnails) == 1 and thumbnails[0]['ContentType'] == 'image/jpeg'
+    assert len(s3.puts) == 2  # Repeated completion adds neither originals nor derivatives.
 
 
 def test_cloud_photo_upload_preview_ocr_and_analysis_end_to_end(cloud_api, monkeypatch):
@@ -129,10 +133,12 @@ def test_cloud_photo_upload_preview_ocr_and_analysis_end_to_end(cloud_api, monke
     read = cloud_api.get(f'/memories/{mid}/image/read', headers=headers())
     assert read.status_code == 200 and read.json()['url'] == 'https://synthetic.invalid/read'
     version = completed.json()['source_image_path'].rsplit('/', 1)[-1]
-    preview = cloud_api.get(f'/memories/{mid}/image/file?variant=thumbnail&v={version}', headers=headers())
+    thumbnail = cloud_api.get(f'/memories/{mid}/image/file?variant=thumbnail&v={version}', headers=headers(), follow_redirects=False)
+    assert thumbnail.status_code == 307 and thumbnail.headers['location'] == 'https://synthetic.invalid/read'
+    preview = cloud_api.get(f'/memories/{mid}/image/file?variant=preview&v={version}', headers=headers())
     assert preview.status_code == 200 and preview.headers['content-type'] == 'image/jpeg'
     assert preview.headers['cache-control'] == 'private, max-age=86400, immutable'
-    cached = cloud_api.get(f'/memories/{mid}/image/file?variant=thumbnail&v={version}',
+    cached = cloud_api.get(f'/memories/{mid}/image/file?variant=preview&v={version}',
         headers={**headers(), 'If-None-Match': preview.headers['etag']})
     assert cached.status_code == 304
     paths = []

@@ -124,3 +124,78 @@ test('source links retain backend Memory IDs and discard invalid references', ()
   ] });
   assert.deepEqual(result.sources, [{ memory_id: 42, title: 'Synthetic event', event_date: '2027-01-01' }]);
 });
+
+test('saved summary, category and tags override older analysis metadata', () => {
+  const draft = fields.memoryFields({ confirmed_content: 'Latest summary', category: 'event', tags: ['current'], confirmed_vision: JSON.stringify({ summary: 'Old summary', category: 'bill', tags: ['stale'], amount: '0' }) });
+  assert.equal(draft.summary, 'Latest summary');
+  assert.equal(draft.category, 'event');
+  assert.deepEqual(draft.tags, ['current']);
+  assert.equal(draft.amount, '0');
+});
+test('legacy invalid structured values do not enter editable inputs, explicit nulls remain cleared', () => {
+  const draft = fields.memoryFields({ amount: '50', confirmed_vision: JSON.stringify({ amount: null, institution: { invalid: true }, time: 123, uncertain_fields: ['date', null] }) });
+  assert.equal(draft.amount, null);
+  assert.equal(draft.institution, null);
+  assert.equal(draft.time, null);
+  assert.deepEqual(draft.uncertain_fields, ['date']);
+});
+
+test('reset passwords must meet requirements and match before submission', async () => {
+  const auth = await loadModule('../src/auth.ts', { 'import.meta.env.VITE_COGNITO_REGION': '"ap-southeast-2"', 'import.meta.env.VITE_COGNITO_CLIENT_ID': '"synthetic-client"' });
+  assert.match(auth.validateResetPassword('short', 'short'), /12 characters/);
+  assert.match(auth.validateResetPassword('NoDigitsOrSymbol', 'NoDigitsOrSymbol'), /numbers and symbols/);
+  assert.match(auth.validateResetPassword('SyntheticPassword12!', 'different'), /do not match/);
+  assert.equal(auth.validateResetPassword('SyntheticPassword12!', 'SyntheticPassword12!'), null);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error('Should not contact Cognito'); };
+  try {
+    await assert.rejects(auth.confirmPasswordReset('test@example.test', '123456', 'weak'), /12 characters/);
+    await assert.rejects(auth.confirmPasswordReset('test@example.test', ' ', 'SyntheticPassword12!'), /verification code/);
+    await assert.rejects(auth.requestPasswordReset(' '), /account email/);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('reset errors explain incorrect codes, expiration, throttling and delivery failures', async () => {
+  const auth = await loadModule('../src/auth.ts', { 'import.meta.env.VITE_COGNITO_REGION': '"ap-southeast-2"', 'import.meta.env.VITE_COGNITO_CLIENT_ID': '"synthetic-client"' });
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const [code, message] of [ ['CodeMismatchException', /incorrect/], ['ExpiredCodeException', /expired/], ['LimitExceededException', /Too many attempts/], ['InvalidPasswordException', /password requirements/] ]) {
+      globalThis.fetch = async () => new Response(JSON.stringify({ __type: code, message: 'Synthetic provider error' }), { status: 400 });
+      await assert.rejects(auth.confirmPasswordReset('test@example.test', '123456', 'SyntheticPassword12!'), message);
+    }
+    globalThis.fetch = async () => new Response(JSON.stringify({ __type: 'CodeDeliveryFailureException' }), { status: 400 });
+    await assert.rejects(auth.requestPasswordReset('test@example.test'), /could not be delivered/);
+    globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
+    await assert.rejects(auth.requestPasswordReset('test@example.test'), /internet connection/);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('requesting recovery does not reveal a nonexistent account and trims account and code', async () => {
+  const auth = await loadModule('../src/auth.ts', { 'import.meta.env.VITE_COGNITO_REGION': '"ap-southeast-2"', 'import.meta.env.VITE_COGNITO_CLIENT_ID': '"synthetic-client"' });
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response(JSON.stringify({ __type: 'com.amazon.cognito#UserNotFoundException' }), { status: 400 });
+    await auth.requestPasswordReset('missing@example.test');
+    let sent;
+    globalThis.fetch = async (_url, init) => { sent = JSON.parse(init.body); return new Response('{}'); };
+    await auth.confirmPasswordReset(' test@example.test ', ' 123456 ', 'SyntheticPassword12!');
+    assert.equal(sent.Username, 'test@example.test');
+    assert.equal(sent.ConfirmationCode, '123456');
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('tag choices normalize case and whitespace and keep selected tags after keyword filtering', () => {
+  const memories = [{ tags: [' Bill ', 'bill', '', 'POWER'] }];
+  assert.deepEqual(fields.availableTags(memories, ['travel']), ['Bill', 'POWER', 'travel']);
+  assert.deepEqual(fields.filterMemories(memories, ['bill', 'power']), memories);
+  assert.deepEqual(fields.availableTags([], ['travel']), ['travel']);
+});
+
+test('reminder suggestions reject uncertain and impossible dates and never reuse an unrelated event time', () => {
+  const now = new Date('2026-11-05T00:00:00');
+  const draft = { ...fields.memoryFields(), due_date: '2027-02-28', date: '2027-01-20', time: '14:00' };
+  assert.deepEqual(fields.reminderSuggestion(draft, now), { day: '2027-02-28', time: '' });
+  assert.deepEqual(fields.reminderSuggestion({ ...draft, uncertain_fields: ['due_date'] }, now), { day: '2027-01-20', time: '14:00' });
+  assert.equal(fields.reminderSuggestion({ ...draft, due_date: '2027-02-30', date: null }, now), null);
+  assert.equal(fields.reminderSuggestion({ ...draft, uncertain_fields: ['date', 'due_date'] }, now), null);
+});

@@ -129,7 +129,11 @@ async function registrationCall(target: string, body: Record<string, unknown>) {
     body: JSON.stringify({ ClientId: appClient, ...body }),
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.message || "The account request could not be completed.");
+  if (!response.ok) {
+    const error = new Error(payload.message || "The account request could not be completed.") as Error & { code?: string };
+    error.code = String(payload.__type || "").split("#").pop();
+    throw error;
+  }
   return payload;
 }
 export async function register(email: string, password: string): Promise<boolean> {
@@ -143,10 +147,46 @@ export async function resendRegistrationCode(email: string) {
   await registrationCall("ResendConfirmationCode", { Username: email });
 }
 
+export function validateResetPassword(password: string, confirmation: string): string | null {
+  if (password.length < 12 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9\s]/.test(password)) {
+    return "Use at least 12 characters, including uppercase, lowercase, numbers and symbols.";
+  }
+  if (password !== confirmation) return "The passwords do not match.";
+  return null;
+}
+
+function recoveryError(error: unknown): Error {
+  const code = error instanceof Error && "code" in error ? error.code : undefined;
+  const messages: Record<string, string> = {
+    CodeMismatchException: "The verification code is incorrect. Check the email and try again.",
+    ExpiredCodeException: "The reset code has expired. Request a new code.",
+    InvalidPasswordException: "Your password does not meet the account password requirements.",
+    PasswordHistoryPolicyViolationException: "Choose a password you have not used recently.",
+    LimitExceededException: "Too many attempts. Please wait before trying again.",
+    TooManyRequestsException: "Too many requests. Please wait before trying again.",
+    CodeDeliveryFailureException: "The reset email could not be delivered. Please try again later.",
+    UserNotFoundException: "The reset could not be completed. Check your account email and request a new code.",
+  };
+  if (typeof code === "string" && messages[code]) return new Error(messages[code]);
+  if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) return new Error("The request timed out. Please try again.");
+  if (error instanceof TypeError) return new Error("Could not connect. Check your internet connection and try again.");
+  return error instanceof Error ? error : new Error("Password recovery could not be completed.");
+}
+
 export async function requestPasswordReset(username: string) {
-  await registrationCall("ForgotPassword", { Username: username });
+  if (!username.trim()) throw new Error("Enter your account email or username.");
+  try { await registrationCall("ForgotPassword", { Username: username.trim() }); }
+  catch (error) {
+    // Keep the same request-code screen for accounts that do not exist.
+    if (error instanceof Error && "code" in error && error.code === "UserNotFoundException") return;
+    throw recoveryError(error);
+  }
 }
 
 export async function confirmPasswordReset(username: string, code: string, password: string) {
-  await registrationCall("ConfirmForgotPassword", { Username: username, ConfirmationCode: code, Password: password });
+  if (!username.trim() || !code.trim()) throw new Error("Enter your account email and verification code.");
+  const validation = validateResetPassword(password, password);
+  if (validation) throw new Error(validation);
+  try { await registrationCall("ConfirmForgotPassword", { Username: username.trim(), ConfirmationCode: code.trim(), Password: password }); }
+  catch (error) { throw recoveryError(error); }
 }
