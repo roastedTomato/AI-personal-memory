@@ -46,6 +46,8 @@ def deliver_reminder(memory_id: int, schedule_name: str) -> dict[str, str]:
         memory.reminder_delivery_lease_until = now + LEASE
         claim = {
             "title": memory.title,
+            "content": memory.confirmed_content,
+            "location": memory.location,
             "reminder_at": memory.reminder_at,
             "timezone": memory.reminder_timezone,
             "recipient": recipient,
@@ -63,15 +65,19 @@ def deliver_reminder(memory_id: int, schedule_name: str) -> dict[str, str]:
         ))
         try:
             local_due = claim["reminder_at"].astimezone(ZoneInfo(claim["timezone"]))
+            location = claim["location"] or "Not specified"
+            content = claim["content"] or "Not specified"
             client.send_email(
                 FromEmailAddress=config.SES_FROM_EMAIL,
                 Destination={"ToAddresses": [claim["recipient"]]},
                 Content={"Simple": {
                     "Subject": {"Data": "AI Personal Memory reminder", "Charset": "UTF-8"},
                     "Body": {"Text": {"Data": (
-                        f"Your reminder is due: {claim['title']}\n"
-                        f"Scheduled for {local_due.strftime('%d %b %Y at %H:%M %Z')}.\n\n"
-                        "Open AI Personal Memory to review the saved details."
+                        f"Title: {claim['title']}\n\n"
+                        f"Content: {content}\n\n"
+                        f"Time: {local_due.strftime('%d %b %Y at %H:%M %Z')}\n"
+                        f"Location: {location}\n\n"
+                        "Open AI Personal Memory to review this Memory."
                     ), "Charset": "UTF-8"}},
                 }},
             )
