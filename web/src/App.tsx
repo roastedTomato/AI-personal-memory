@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { API_URL, createImageMemory, readMemoryImage, request, uploadMemoryImage } from "./api";
 import type { Memory, VisionDraft, VisionEnvelope } from "./api";
-import { getIdentityToken, restoreSession, signIn, signOut } from "./auth";
+import { getIdentityToken, restoreSession, signIn, signOut, sendEmailVerificationCode, confirmEmailVerification } from "./auth";
 
 type Draft = { title: string; original_text: string; category: string; tags: string };
 const blankDraft: Draft = { title: "", original_text: "", category: "", tags: "" };
@@ -56,7 +56,7 @@ export default function App() {
   const [reminderBusy, setReminderBusy] = useState(false);
 
   const loadMemories = useCallback(async (term = "") => {
-    setBusy(true); setError("");
+    setBusy(true);
     try { setMemories(await request<Memory[]>(`/memories${term.trim() ? `?q=${encodeURIComponent(term.trim())}` : ""}`)); }
     catch (e) { setError(e instanceof Error ? e.message : "Could not load your Memories."); }
     finally { setBusy(false); }
@@ -92,10 +92,21 @@ export default function App() {
     }
     const body = { title: draft.title.trim(), original_text: draft.original_text.trim(), confirmed_content: editingMemory && draft.original_text.trim() === editingMemory.original_text ? editingMemory.confirmed_content : draft.original_text.trim(), category: draft.category.trim() || null, tags: draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean) };
     try {
-      await (editingId === null
+      const saved = await (editingId === null
         ? request<Memory>("/memories", { method: "POST", body: JSON.stringify(body) })
         : request<Memory>(`/memories/${editingId}`, { method: "PATCH", body: JSON.stringify(body) }));
-      setDraft(blankDraft); setEditingId(null); setEditingMemory(null); setSelectedImage(null); setNotice("Memory saved."); await loadMemories(query);
+      const reminderChanged = Boolean(reminderDay || reminderTime) &&
+        (reminderDay !== localDatePart(editingMemory?.reminder_at ?? null) || reminderTime !== localTimePart(editingMemory?.reminder_at ?? null));
+      if (reminderChanged) {
+        try {
+          await persistEmailReminder(saved.id);
+        } catch (e) {
+          await loadMemories(query);
+          setError(`Memory saved, but the email reminder was not saved: ${e instanceof Error ? e.message : "Please try again."}`);
+          return;
+        }
+      }
+      setDraft(blankDraft); setEditingId(null); setEditingMemory(null); setSelectedImage(null); setReminderDay(""); setReminderTime(""); setNotice(reminderChanged ? "Memory and email reminder saved." : "Memory saved."); await loadMemories(query);
     } catch (e) { setError(e instanceof Error ? e.message : "Could not save this Memory."); }
     finally { setBusy(false); }
   }
@@ -198,6 +209,21 @@ export default function App() {
     setVisionReview((current) => current ? { ...current, draft: { ...current.draft, [key]: value } } : current);
   }
 
+  async function persistEmailReminder(memoryId: number): Promise<Memory> {
+    if (!reminderDay || !reminderTime) throw new Error("Choose both a reminder date and time.");
+    const due = new Date(`${reminderDay}T${reminderTime}:00`);
+    if (!Number.isFinite(due.getTime()) || due <= new Date()) throw new Error("Choose a valid future date and time.");
+    await request(`/memories/${memoryId}/reminder/email`, { method: "PUT", body: JSON.stringify({
+      reminder_at: due.toISOString(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      identity_token: await getIdentityToken(),
+    }) });
+    const fresh = await request<Memory>(`/memories/${memoryId}`);
+    if (fresh.reminder_delivery !== "email" || !fresh.reminder_at || new Date(fresh.reminder_at).getTime() !== due.getTime()) {
+      throw new Error("The server did not confirm the saved reminder. Refresh and try again.");
+    }
+    return fresh;
+  }
+
   async function saveEmailReminder() {
     if (!editingMemory || !reminderDay || !reminderTime) { setError("Choose both a reminder date and time."); return; }
     const localDate = new Date(`${reminderDay}T${reminderTime}:00`);
@@ -205,11 +231,7 @@ export default function App() {
     if (editingMemory.reminder_at && editingMemory.reminder_delivery === "local" && !window.confirm("This Memory already has a reminder saved by the mobile app. Replacing it with email may not cancel the notification already scheduled on that phone. Continue?")) return;
     setReminderBusy(true); setError(""); setNotice("");
     try {
-      await request(`/memories/${editingMemory.id}/reminder/email`, { method: "PUT", body: JSON.stringify({
-        reminder_at: localDate.toISOString(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-        identity_token: await getIdentityToken(),
-      }) });
-      const fresh = await request<Memory>(`/memories/${editingMemory.id}`);
+      const fresh = await persistEmailReminder(editingMemory.id);
       setEditingMemory(fresh); setReminderDay(localDatePart(fresh.reminder_at)); setReminderTime(localTimePart(fresh.reminder_at));
       setNotice("Email reminder scheduled."); await loadMemories(query);
     } catch (e) { setError(e instanceof Error ? e.message : "Could not schedule the email reminder."); }
@@ -262,7 +284,7 @@ export default function App() {
           </article>)}</div>}
         </section>
         <aside className="editor-panel" id="memory-form"><p className="eyebrow">MANUAL ENTRY</p><h2>{editingId === null ? "Add a Memory" : "Edit Memory"}</h2><p className="muted small-copy">Manual saving works without AI.</p>
-          <form className="form-stack" onSubmit={handleSave}>
+          <form className="form-stack" onSubmit={handleSave} onInvalidCapture={() => setError("Please complete the required Title and Details fields before saving.")}>
             <label>Title<input maxLength={200} value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="e.g. Power bill — November" required /></label>
             <label>{imagePendingConfirmation ? "Recognised text — review and correct" : "Details"}<textarea rows={6} value={draft.original_text} onChange={(e) => { setDraft({ ...draft, original_text: e.target.value }); if (imagePendingConfirmation) { setOcrText(e.target.value); if (visionReview) setOcrEditedAfterAnalysis(true); } }} placeholder="Write the details you want to remember" required /></label>
             <label>Category{imagePendingConfirmation ? <select value={draft.category} onChange={(e) => { setDraft({ ...draft, category: e.target.value }); if (visionReview) updateVisionDraft("category", (e.target.value || null) as VisionDraft["category"]); }}><option value="">Unclassified</option>{["bill", "receipt", "notice", "event", "appointment", "travel", "other"].map((category) => <option key={category} value={category}>{category}</option>)}</select> : <input maxLength={100} value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })} placeholder="Bill, receipt, notice…" />}</label>
@@ -287,13 +309,29 @@ export default function App() {
             </section>}
             {editingId !== null && editingMemory && !imagePendingConfirmation && editingMemory.confirmation_status !== "draft" && <section className="email-reminder-section">
               <h3>Email reminder</h3>
+              {error.includes("verified Cognito email") && <button type="button" disabled={reminderBusy} onClick={async () => {
+                setReminderBusy(true);
+                try {
+                  await sendEmailVerificationCode();
+                  const code = window.prompt("Enter the verification code sent to your Cognito account email:");
+                  if (!code?.trim()) { setNotice("Verification code sent. Click Verify account email again when ready."); return; }
+                  await confirmEmailVerification(code.trim());
+                  setError(""); setNotice("Account email verified. You can now save your email reminder.");
+                } catch (e) { setError(e instanceof Error ? e.message : "Email verification failed."); }
+                finally { setReminderBusy(false); }
+              }}>Verify account email</button>}
+              {reminderBusy && <p role="status">Saving email reminder…</p>}
+              {error && <p className="error" role="alert">{error}</p>}
+              {notice && <p role="status">{notice}</p>}
               {editingMemory.reminder_at && <p className="muted small-copy">Current: {new Date(editingMemory.reminder_at).toLocaleString("en-NZ")} · {editingMemory.reminder_delivery === "email" ? `Email (${editingMemory.reminder_delivery_status || "scheduled"})` : "Mobile notification"}</p>}
               <label>Date<input type="date" value={reminderDay} onChange={(e) => setReminderDay(e.target.value)} /></label>
               <label>Time<input type="time" value={reminderTime} onChange={(e) => setReminderTime(e.target.value)} /></label>
               <div className="review-actions"><button type="button" className="secondary-button" disabled={reminderBusy || !reminderDay || !reminderTime} onClick={() => void saveEmailReminder()}>{reminderBusy ? "Saving…" : editingMemory.reminder_delivery === "email" ? "Update email reminder" : "Schedule email reminder"}</button>{editingMemory.reminder_delivery === "email" && <button type="button" className="quiet-button" disabled={reminderBusy} onClick={() => void cancelEmailReminder()}>Cancel reminder</button>}</div>
               <p className="muted small-copy">Sent to the verified email address on your Cognito account.</p>
             </section>}
-            <button className="primary-button" disabled={busy || imageBusy}>{busy ? "Saving…" : imagePendingConfirmation ? "Confirm and save" : editingId === null ? "Save Memory" : "Save changes"}</button>
+            {error && <p className="error" role="alert">{error}</p>}
+            {notice && <p role="status">{notice}</p>}
+            <button className="primary-button" disabled={busy || imageBusy || reminderBusy}>{busy ? "Saving…" : imagePendingConfirmation ? "Confirm and save" : editingId === null ? "Save Memory" : "Save changes"}</button>
             {editingId !== null && <button type="button" className="quiet-button cancel-button" onClick={() => { setEditingId(null); setEditingMemory(null); setDraft(blankDraft); setSelectedImage(null); }}>Cancel edit</button>}
           </form>
         </aside>

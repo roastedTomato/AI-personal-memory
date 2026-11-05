@@ -17,6 +17,7 @@ function config() {
 async function cognitoCall(target: string, body: Record<string, unknown>): Promise<AuthTokens> {
   const { endpoint: url } = config();
   const response = await fetch(url, {
+    signal: AbortSignal.timeout(20000),
     method: "POST",
     headers: { "Content-Type": "application/x-amz-json-1.1", "X-Amz-Target": `AWSCognitoIdentityProviderService.${target}` },
     body: JSON.stringify(body),
@@ -77,6 +78,29 @@ export async function getIdentityToken(): Promise<string> {
   await getAccessToken();
   if (!identityToken) throw new Error("Cognito did not provide an identity token. Sign out and sign in again.");
   return identityToken;
+}
+
+async function emailAttributeCall(target: string, extra: Record<string, string> = {}) {
+  const token = await getAccessToken();
+  if (!token) throw new Error("Sign in again to verify your email.");
+  const { endpoint: url } = config();
+  const response = await fetch(url, {
+    method: "POST", signal: AbortSignal.timeout(20000),
+    headers: { "Content-Type": "application/x-amz-json-1.1", "X-Amz-Target": `AWSCognitoIdentityProviderService.${target}` },
+    body: JSON.stringify({ AccessToken: token, AttributeName: "email", ...extra }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.message || "Email verification failed.");
+}
+
+export async function sendEmailVerificationCode() {
+  await emailAttributeCall("GetUserAttributeVerificationCode");
+}
+
+export async function confirmEmailVerification(code: string) {
+  await emailAttributeCall("VerifyUserAttribute", { Code: code });
+  expiresAt = 0;
+  await getAccessToken();
 }
 
 export async function signOut() {

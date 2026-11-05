@@ -37,9 +37,9 @@ are copied to cloud and no owner IDs are reassigned automatically.
 Migration `0003_email_reminders` adds reminder delivery state and a user email
 table. The email-reminder API verifies the Cognito ID token against the signed-in
 access-token subject and accepts only a verified Cognito email. The scheduled
-worker sends the Memory title and due time, not its saved content. It retries SES
-failures up to five attempts with backoff; delivery is at-least-once if a send
-succeeds but its database acknowledgement fails.
+worker sends the Memory title, confirmed content, reminder time and location. It
+retries SES failures up to five attempts with backoff; delivery is at-least-once
+if a send succeeds but its database acknowledgement fails.
 
 Cloud SQLAlchemy uses NullPool, a 5-second connect timeout and transaction-local
 statement/idle timeouts. Sessions always close. OpenAI calls run outside DB
