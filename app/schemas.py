@@ -59,6 +59,10 @@ class MemoryRead(BaseModel):
     ai_generated_at: datetime | None
     reminder_at: datetime | None
     reminder_notification_id: str | None
+    reminder_delivery: str
+    reminder_timezone: str
+    reminder_delivery_status: str | None
+    reminder_sent_at: datetime | None
     source_image_path: str | None
     source_image_filename: str | None
     source_image_mime_type: str | None
@@ -112,10 +116,19 @@ class ReminderWrite(BaseModel):
     notification_id: str | None = Field(default=None, min_length=1, max_length=255)
 
 
+class EmailReminderWrite(BaseModel):
+    reminder_at: datetime
+    timezone: str = Field(min_length=1, max_length=64)
+    identity_token: str = Field(min_length=1, max_length=16384)
+
+
 class ReminderRead(BaseModel):
     memory_id: int
     reminder_at: datetime
     notification_id: str | None
+    delivery: str = "local"
+    delivery_status: str | None = None
+    sent_at: datetime | None = None
 
 
 

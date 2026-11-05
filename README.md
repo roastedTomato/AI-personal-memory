@@ -12,7 +12,7 @@ The project currently runs locally with a React Native + Expo mobile app, a Fast
 - Generate structured field drafts with OpenAI only after explicit user consent
 - Review and confirm titles, dates, amounts, locations, purposes, and other fields
 - Search by keywords and filter by tags
-- Create one-time reminders delivered through Expo local notifications
+- Create one-time reminders (Expo local notifications on mobile; email on Web when the SES worker is deployed)
 - Ask natural-language questions about saved Memories with RAG-based AI Q&A
 - Preserve original sources by default; deletion remains user-controlled
 - Continue with manual editing and saving when AI recognition fails
@@ -177,7 +177,7 @@ Re-analysis is an explicit user action. Opening a saved Memory does not automati
 - V2: Cross-device synchronization
 - RAG retrieval and AI Q&A: available in the local single-user app
 
-V1 does not include recurring reminders, automatic email/SMS access, website scraping, multi-user sharing, or professional legal, medical, or financial advice. RAG and AI Q&A are currently available locally; production multi-user authentication and cloud deployment remain future work.
+V1 does not include recurring reminders, incoming email/SMS ingestion, website scraping, multi-user sharing, or professional legal, medical, or financial advice. RAG and AI Q&A are currently available locally; production multi-user authentication and cloud deployment remain future work.
 
 ## License
 

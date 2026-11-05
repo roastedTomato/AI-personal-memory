@@ -1,6 +1,6 @@
 from datetime import UTC, date, datetime
 
-from sqlalchemy import Date, DateTime, Numeric, String, Text, func
+from sqlalchemy import Date, DateTime, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import UserDefinedType
 
@@ -38,6 +38,14 @@ class Memory(Base):
     ai_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reminder_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reminder_notification_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reminder_delivery: Mapped[str] = mapped_column(String(20), default="local", server_default="local")
+    reminder_timezone: Mapped[str] = mapped_column(String(64), default="UTC", server_default="UTC")
+    reminder_delivery_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    reminder_delivery_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    reminder_delivery_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reminder_next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reminder_schedule_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     source_image_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_image_mime_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -65,6 +73,14 @@ class Memory(Base):
     embedding_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now(), onupdate=lambda: datetime.now(UTC))
+
+
+class UserEmail(Base):
+    __tablename__ = "user_emails"
+
+    user_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    email: Mapped[str] = mapped_column(String(320))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=lambda: datetime.now(UTC))
 
 
 

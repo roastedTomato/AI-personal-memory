@@ -2,11 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { API_URL, createImageMemory, readMemoryImage, request, uploadMemoryImage } from "./api";
 import type { Memory, VisionDraft, VisionEnvelope } from "./api";
-import { restoreSession, signIn, signOut } from "./auth";
+import { getIdentityToken, restoreSession, signIn, signOut } from "./auth";
 
 type Draft = { title: string; original_text: string; category: string; tags: string };
 const blankDraft: Draft = { title: "", original_text: "", category: "", tags: "" };
 const dateLabel = (value: string) => new Intl.DateTimeFormat("en-NZ", { dateStyle: "medium" }).format(new Date(value));
+const localDatePart = (value: string | null | undefined) => {
+  if (!value) return "";
+  const date = new Date(value);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+};
+const localTimePart = (value: string | null | undefined) => value ? new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value)) : "";
 
 function MemoryPhoto({ memory, large = false }: { memory: Memory; large?: boolean }) {
   const [url, setUrl] = useState("");
@@ -45,6 +51,9 @@ export default function App() {
   const [imageBusy, setImageBusy] = useState(false);
   const [imagePendingConfirmation, setImagePendingConfirmation] = useState(false);
   const [ocrEditedAfterAnalysis, setOcrEditedAfterAnalysis] = useState(false);
+  const [reminderDay, setReminderDay] = useState("");
+  const [reminderTime, setReminderTime] = useState("");
+  const [reminderBusy, setReminderBusy] = useState(false);
 
   const loadMemories = useCallback(async (term = "") => {
     setBusy(true); setError("");
@@ -104,6 +113,8 @@ export default function App() {
     setOcrStarted(Boolean(pending || recognized || memory.ocr_text || memory.confirmed_image_text));
     setImagePendingConfirmation(memory.confirmation_status === "draft" || Boolean(pending));
     setOcrEditedAfterAnalysis(false);
+    setReminderDay(localDatePart(memory.reminder_at));
+    setReminderTime(localTimePart(memory.reminder_at));
     setNotice(""); setError("");
     document.getElementById("memory-form")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -187,6 +198,35 @@ export default function App() {
     setVisionReview((current) => current ? { ...current, draft: { ...current.draft, [key]: value } } : current);
   }
 
+  async function saveEmailReminder() {
+    if (!editingMemory || !reminderDay || !reminderTime) { setError("Choose both a reminder date and time."); return; }
+    const localDate = new Date(`${reminderDay}T${reminderTime}:00`);
+    if (!Number.isFinite(localDate.getTime()) || localDate <= new Date()) { setError("Choose a valid future date and time."); return; }
+    if (editingMemory.reminder_at && editingMemory.reminder_delivery === "local" && !window.confirm("This Memory already has a reminder saved by the mobile app. Replacing it with email may not cancel the notification already scheduled on that phone. Continue?")) return;
+    setReminderBusy(true); setError(""); setNotice("");
+    try {
+      await request(`/memories/${editingMemory.id}/reminder/email`, { method: "PUT", body: JSON.stringify({
+        reminder_at: localDate.toISOString(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        identity_token: await getIdentityToken(),
+      }) });
+      const fresh = await request<Memory>(`/memories/${editingMemory.id}`);
+      setEditingMemory(fresh); setReminderDay(localDatePart(fresh.reminder_at)); setReminderTime(localTimePart(fresh.reminder_at));
+      setNotice("Email reminder scheduled."); await loadMemories(query);
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not schedule the email reminder."); }
+    finally { setReminderBusy(false); }
+  }
+
+  async function cancelEmailReminder() {
+    if (!editingMemory || editingMemory.reminder_delivery !== "email") return;
+    setReminderBusy(true); setError(""); setNotice("");
+    try {
+      await request<null>(`/memories/${editingMemory.id}/reminder`, { method: "DELETE" });
+      const fresh = await request<Memory>(`/memories/${editingMemory.id}`);
+      setEditingMemory(fresh); setReminderDay(""); setReminderTime(""); setNotice("Email reminder cancelled."); await loadMemories(query);
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not cancel the email reminder."); }
+    finally { setReminderBusy(false); }
+  }
+
   async function handleSignOut() {
     await signOut(); setSignedIn(false); setMemories([]); setDraft(blankDraft); setEditingId(null); setEditingMemory(null); setSelectedImage(null); setError("");
   }
@@ -218,7 +258,7 @@ export default function App() {
         <section className="library-panel">
           <form className="search" onSubmit={(e) => { e.preventDefault(); void loadMemories(query); }}><span aria-hidden="true">⌕</span><input aria-label="Search Memories" placeholder="Search your library" value={query} onChange={(e) => setQuery(e.target.value)} /><button type="submit" disabled={busy}>Search</button></form>
           {busy && memories.length === 0 ? <div className="empty">Loading your library…</div> : memories.length === 0 ? <div className="empty"><div className="empty-icon">✳</div><h2>Your library is ready</h2><p>Add a note or document detail using the form.</p></div> : <div className="memory-list">{memories.map((memory) => <article className="memory-card" key={memory.id}>
-            <div className="memory-icon">{(memory.category || "M").slice(0, 1).toUpperCase()}</div><div className="memory-main"><div className="memory-title-row"><h2>{memory.title}</h2><span className="date">{dateLabel(memory.created_at)}</span></div>{memory.category && <p className="category">{memory.category}</p>}<p className="memory-copy">{memory.confirmed_content || memory.original_text}</p>{memory.source_image_path && <MemoryPhoto memory={memory} />} {memory.tags.length > 0 && <div className="tags">{memory.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}<div className="card-actions"><button onClick={() => startEdit(memory)}>Edit</button><button className="delete-link" onClick={() => void removeMemory(memory)}>Delete</button></div></div>
+            <div className="memory-icon">{(memory.category || "M").slice(0, 1).toUpperCase()}</div><div className="memory-main"><div className="memory-title-row"><h2>{memory.title}</h2><span className="date">{dateLabel(memory.created_at)}</span></div>{memory.category && <p className="category">{memory.category}</p>}<p className="memory-copy">{memory.confirmed_content || memory.original_text}</p>{memory.reminder_at && <p className="reminder-note">{memory.reminder_delivery === "email" ? "Email reminder" : "Mobile reminder"}: {new Date(memory.reminder_at).toLocaleString("en-NZ")}{memory.reminder_delivery_status ? ` · ${memory.reminder_delivery_status}` : ""}</p>}{memory.source_image_path && <MemoryPhoto memory={memory} />} {memory.tags.length > 0 && <div className="tags">{memory.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}<div className="card-actions"><button onClick={() => startEdit(memory)}>Edit</button><button className="delete-link" onClick={() => void removeMemory(memory)}>Delete</button></div></div>
           </article>)}</div>}
         </section>
         <aside className="editor-panel" id="memory-form"><p className="eyebrow">MANUAL ENTRY</p><h2>{editingId === null ? "Add a Memory" : "Edit Memory"}</h2><p className="muted small-copy">Manual saving works without AI.</p>
@@ -244,6 +284,14 @@ export default function App() {
                 {visionReview.draft.warnings.map((warning, index) => <p className="review-warning" key={index}>{warning}</p>)}
                 <p className="muted small-copy">The OCR text and AI suggestions are drafts. Review all fields, then confirm below.</p>
               </div>}
+            </section>}
+            {editingId !== null && editingMemory && !imagePendingConfirmation && editingMemory.confirmation_status !== "draft" && <section className="email-reminder-section">
+              <h3>Email reminder</h3>
+              {editingMemory.reminder_at && <p className="muted small-copy">Current: {new Date(editingMemory.reminder_at).toLocaleString("en-NZ")} · {editingMemory.reminder_delivery === "email" ? `Email (${editingMemory.reminder_delivery_status || "scheduled"})` : "Mobile notification"}</p>}
+              <label>Date<input type="date" value={reminderDay} onChange={(e) => setReminderDay(e.target.value)} /></label>
+              <label>Time<input type="time" value={reminderTime} onChange={(e) => setReminderTime(e.target.value)} /></label>
+              <div className="review-actions"><button type="button" className="secondary-button" disabled={reminderBusy || !reminderDay || !reminderTime} onClick={() => void saveEmailReminder()}>{reminderBusy ? "Saving…" : editingMemory.reminder_delivery === "email" ? "Update email reminder" : "Schedule email reminder"}</button>{editingMemory.reminder_delivery === "email" && <button type="button" className="quiet-button" disabled={reminderBusy} onClick={() => void cancelEmailReminder()}>Cancel reminder</button>}</div>
+              <p className="muted small-copy">Sent to the verified email address on your Cognito account.</p>
             </section>}
             <button className="primary-button" disabled={busy || imageBusy}>{busy ? "Saving…" : imagePendingConfirmation ? "Confirm and save" : editingId === null ? "Save Memory" : "Save changes"}</button>
             {editingId !== null && <button type="button" className="quiet-button cancel-button" onClick={() => { setEditingId(null); setEditingMemory(null); setDraft(blankDraft); setSelectedImage(null); }}>Cancel edit</button>}

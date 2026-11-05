@@ -15,6 +15,12 @@ Parameters:
   OpenAISecretArn:
     Type: String
     Description: Existing Secrets Manager secret with api_key JSON field
+  EmailSenderAddress:
+    Type: String
+    Default: ''
+    Description: Optional verified Amazon SES sender address; enables scheduled email reminders
+Conditions:
+  EmailRemindersEnabled: !Not [!Equals [!Ref EmailSenderAddress, '']]
 Resources:
   Originals:
     Type: AWS::S3::Bucket
@@ -113,6 +119,18 @@ Resources:
                 Resource:
                   - !Sub '${Originals.Arn}/users/*'
                   - !Sub '${Originals.Arn}/pending/*'
+  EmailRuntimePolicy:
+    Type: AWS::IAM::Policy
+    Condition: EmailRemindersEnabled
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-email-reminders'
+      Roles: [!Ref RuntimeRole]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: ['ses:SendEmail']
+            Resource: !Sub 'arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${EmailSenderAddress}'
   ApiLogs:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -141,6 +159,10 @@ Resources:
           COGNITO_CLIENT_ID: !Ref AppClient
           DATABASE_URL: !Sub '{{resolve:secretsmanager:${DatabaseSecretArn}:SecretString:pooled_url}}'
           OPENAI_API_KEY: !Sub '{{resolve:secretsmanager:${OpenAISecretArn}:SecretString:api_key}}'
+          SES_FROM_EMAIL: !Ref EmailSenderAddress
+          EMAIL_REMINDER_SCHEDULE_GROUP: !If [EmailRemindersEnabled, !Ref EmailReminderScheduleGroup, '']
+          EMAIL_REMINDER_TARGET_ROLE_ARN: !If [EmailRemindersEnabled, !GetAtt EmailReminderTargetRole.Arn, '']
+          LAMBDA_FUNCTION_ARN: !GetAtt ApiFunction.Arn
           REQUEST_DEADLINE_SECONDS: '25'
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
@@ -150,7 +172,7 @@ Resources:
       CorsConfiguration:
         AllowOrigins: [!Ref WebOrigin]
         AllowHeaders: [authorization, content-type]
-        AllowMethods: [GET, POST, PATCH, DELETE, OPTIONS]
+        AllowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
         MaxAge: 300
   Integration:
     Type: AWS::ApiGatewayV2::Integration
@@ -203,6 +225,48 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
+  EmailReminderScheduleGroup:
+    Type: AWS::Scheduler::ScheduleGroup
+    Condition: EmailRemindersEnabled
+    Properties:
+      Name: !Sub '${AWS::StackName}-email-reminders'
+  EmailReminderTargetRole:
+    Type: AWS::IAM::Role
+    Condition: EmailRemindersEnabled
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeReminderLambda
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt ApiFunction.Arn
+  EmailReminderInvokePermission:
+    Type: AWS::IAM::Policy
+    Condition: EmailRemindersEnabled
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-schedule-reminders'
+      Roles: [!Ref RuntimeRole]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: ['scheduler:CreateSchedule', 'scheduler:DeleteSchedule']
+            Resource: !Sub 'arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/${AWS::StackName}-email-reminders/*'
+          - Effect: Allow
+            Action: iam:PassRole
+            Resource: !GetAtt EmailReminderTargetRole.Arn
+            Condition:
+              StringEquals:
+                iam:PassedToService: scheduler.amazonaws.com
 Outputs:
   ApiUrl:
     Value: !GetAtt HttpApi.ApiEndpoint

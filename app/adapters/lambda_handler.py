@@ -11,6 +11,9 @@ _mangum_handler = Mangum(app, lifespan="off")
 
 def handler(event, context):
     """Adapt API Gateway events, including Python 3.15 local simulation."""
+    if isinstance(event, dict) and event.get("source") == "ai-personal-memory.email-reminder":
+        from app.services.email_reminders import deliver_reminder
+        return deliver_reminder(event.get("memory_id"), event.get("schedule_name"))
     try:
         asyncio.get_event_loop()
     except RuntimeError:

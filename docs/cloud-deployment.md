@@ -1,8 +1,9 @@
 # M5.1 deployment preparation
 
-Target: Expo → HTTP API Gateway → Lambda → Neon PostgreSQL + private S3;
-Cognito access tokens authorize every `/memories` endpoint. Local Expo notifications
-remain on the device. No AWS/Neon resources have been created.
+Target: Expo/Web → HTTP API Gateway → Lambda → Neon PostgreSQL + private S3;
+Cognito access tokens authorize every `/memories` endpoint. Mobile Expo notifications
+remain on the device; Web reminders use email when SES delivery is enabled. The existing
+AWS backend is deployed independently of this CloudFormation preparation template.
 
 ## Configuration and migrations
 
@@ -32,6 +33,13 @@ No migrations were applied to the existing local database. The updated app needs
 these schema additions before database-backed use; upgrading a personal database
 requires a separately approved backup/migration step. No personal data or images
 are copied to cloud and no owner IDs are reassigned automatically.
+
+Migration `0003_email_reminders` adds reminder delivery state and a user email
+table. The email-reminder API verifies the Cognito ID token against the signed-in
+access-token subject and accepts only a verified Cognito email. The scheduled
+worker sends the Memory title and due time, not its saved content. It retries SES
+failures up to five attempts with backoff; delivery is at-least-once if a send
+succeeds but its database acknowledgement fails.
 
 Cloud SQLAlchemy uses NullPool, a 5-second connect timeout and transaction-local
 statement/idle timeouts. Sessions always close. OpenAI calls run outside DB
@@ -99,12 +107,25 @@ It accepts an exact `WebOrigin` (defaulting to the local Vite origin), an existi
 digest-pinned ECR image, and existing Secrets Manager ARNs
 (`pooled_url`, `api_key` fields), then defines private SSE-S3 storage, Cognito,
 2048 MB Lambda/512 MB temporary space/29-second timeout, HTTP API and a minimal
-runtime role. No VPC, NAT, RDS, remote push, sync, provisioned concurrency, scheduled
-worker or keep-alive. Logs retain seven days; S3/UserPool are retained on stack deletion.
+runtime role. No VPC, NAT, RDS, remote push, sync, provisioned concurrency or keep-alive.
+One-time email reminder scheduling is conditional on enabling an SES sender. Logs retain seven
+days; S3/UserPool are retained on stack deletion.
 HTTP API CORS allows only `WebOrigin`; an explicit unauthenticated OPTIONS route
 rewrites preflight requests to the public health handler and returns 204. S3 CORS
 allows browser POST uploads from that same exact origin; a hosted Web deployment
 must pass its own origin for both services.
+
+Email reminders are disabled unless `EmailSenderAddress` is set to an SES-verified
+identity. When configured, the template grants `ses:SendEmail` only for that
+identity and creates an EventBridge Scheduler group. The API creates a one-time
+schedule for each email reminder; updating or cancelling a reminder replaces or
+deletes its schedule. Failed email deliveries receive bounded, individually
+scheduled retries; there is no periodic database polling.
+Before deployment, verify the sender in the same AWS region; SES sandbox accounts
+also require the recipient address to be verified or the account to be approved
+for production sending. The sender identity, schedule group and delivery IAM
+policy are not created by the current deployment. SES/Scheduler/Lambda charges and the
+sender verification gate must be reviewed before enabling them.
 
 ## Verification / remaining gates
 

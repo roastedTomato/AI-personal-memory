@@ -12,6 +12,10 @@ STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "s3" if APP_ENV == "cloud" else "
 COGNITO_ISSUER = os.getenv("COGNITO_ISSUER", "")
 COGNITO_CLIENT_ID = os.getenv("COGNITO_CLIENT_ID", "")
 S3_BUCKET = os.getenv("S3_BUCKET", "")
+SES_FROM_EMAIL = os.getenv("SES_FROM_EMAIL", "")
+EMAIL_REMINDER_SCHEDULE_GROUP = os.getenv("EMAIL_REMINDER_SCHEDULE_GROUP", "")
+EMAIL_REMINDER_TARGET_ROLE_ARN = os.getenv("EMAIL_REMINDER_TARGET_ROLE_ARN", "")
+LAMBDA_FUNCTION_ARN = os.getenv("LAMBDA_FUNCTION_ARN", "")
 REQUEST_DEADLINE_SECONDS = float(os.getenv("REQUEST_DEADLINE_SECONDS", "25"))
 if not 0 < REQUEST_DEADLINE_SECONDS <= 25:
     raise RuntimeError("Request deadline must be between 0 and 25 seconds")

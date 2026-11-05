@@ -28,6 +28,10 @@ export type Memory = {
   confirmed_vision?: string | null;
   created_at: string;
   updated_at: string;
+  reminder_at?: string | null;
+  reminder_delivery?: string;
+  reminder_delivery_status?: string | null;
+  reminder_sent_at?: string | null;
 };
 
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {

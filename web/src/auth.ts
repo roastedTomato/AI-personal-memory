@@ -3,8 +3,9 @@ const clientId = import.meta.env.VITE_COGNITO_CLIENT_ID as string | undefined;
 const endpoint = region ? `https://cognito-idp.${region}.amazonaws.com/` : null;
 const REFRESH_KEY = "apm.web.refresh-token";
 
-type AuthTokens = { AccessToken: string; RefreshToken?: string; ExpiresIn?: number };
+type AuthTokens = { AccessToken: string; IdToken?: string; RefreshToken?: string; ExpiresIn?: number };
 let accessToken: string | null = null;
+let identityToken: string | null = null;
 let expiresAt = 0;
 let refreshInFlight: Promise<string | null> | null = null;
 
@@ -33,6 +34,7 @@ async function cognitoCall(target: string, body: Record<string, unknown>): Promi
 
 function applyTokens(tokens: AuthTokens) {
   accessToken = tokens.AccessToken;
+  identityToken = tokens.IdToken ?? null;
   expiresAt = Date.now() + Math.max(30, (tokens.ExpiresIn ?? 3600) - 30) * 1000;
   if (tokens.RefreshToken) sessionStorage.setItem(REFRESH_KEY, tokens.RefreshToken);
 }
@@ -71,10 +73,17 @@ export async function getAccessToken(): Promise<string | null> {
   try { return await pending; } finally { if (refreshInFlight === pending) refreshInFlight = null; }
 }
 
+export async function getIdentityToken(): Promise<string> {
+  await getAccessToken();
+  if (!identityToken) throw new Error("Cognito did not provide an identity token. Sign out and sign in again.");
+  return identityToken;
+}
+
 export async function signOut() {
   const refreshToken = sessionStorage.getItem(REFRESH_KEY);
   sessionStorage.removeItem(REFRESH_KEY);
   accessToken = null;
+  identityToken = null;
   expiresAt = 0;
   if (!refreshToken || !endpoint || !clientId) return;
   await fetch(endpoint, {

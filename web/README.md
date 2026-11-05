@@ -33,4 +33,6 @@ title, summary, category, tags, and document fields; the image itself is not sen
 to OpenAI in that step. The user can edit the recognised text and suggestions.
 Nothing is confirmed until the user clicks **Confirm and save**. Previews use
 short-lived signed reads. Native local notifications are not part of this Web
-slice.
+slice. The Web UI also supports one-time email reminders, using the verified
+Cognito account email. Sending requires the backend email worker and a verified
+SES sender to be configured and deployed; the local UI alone does not send mail.
