@@ -1,197 +1,75 @@
 # AI Personal Memory
 
-A mobile-first personal document memory library for storing bills, receipts, notices, and other important documents that need to be found later.
+A web app for storing bills, receipts, notices, and other personal documents. Capture a photo, review the extracted details, and find the document later by keyword, tag, or a question.
 
-The project currently runs locally with a React Native + Expo mobile app, a FastAPI backend, and PostgreSQL. The current milestone is **M5: AWS cloud integration and deployment**. AWS resources are not connected yet, and no potentially billable cloud resources will be created without explicit approval.
+[Open the deployed app](https://d2hi82pya3luc1.cloudfront.net/)
 
 ## Features
 
-- Create, view, edit, and delete Memory records manually
-- Import document images from the camera or photo library
-- Run OCR locally while preserving the original image and recognized text
-- Generate structured field drafts with OpenAI only after explicit user consent
-- Review and confirm titles, dates, amounts, locations, purposes, and other fields
-- Search by keywords and filter by tags
-- Create one-time reminders (Expo local notifications on mobile; email on Web when the SES worker is deployed)
-- Ask natural-language questions about saved Memories with RAG-based AI Q&A
-- Preserve original sources by default; deletion remains user-controlled
-- Continue with manual editing and saving when AI recognition fails
-
-### AI Q&A with RAG
-
-The app now supports AI Q&A powered by RAG (Retrieval-Augmented Generation). Users can ask natural-language questions about saved and confirmed Memories, such as “Which event notices did I save last month?” or “Where is the Craftadian handmade market being held?”. The system retrieves relevant confirmed content and generates an answer grounded in the matching Memories.
-
-Local mode retains the single development user; cloud preparation adds Cognito owner isolation. Its design principles are:
-
-- Retrieve only content that the current user is authorized to access
-- Prefer user-confirmed fields and text; never treat an AI draft as a fact
-- Show the Memory or original document sources used for an answer
-- Clearly say when there is not enough evidence instead of guessing or filling gaps
-- Keep original images preserved while allowing vector indexes or retrieval data to be deleted independently
-- Keep keyword search available when embedding or answer generation fails
+- **Capture and review documents.** Take a photo or upload a JPEG, PNG, or WebP image up to 10 MB. Tesseract extracts text, and OpenAI suggests structured fields with your consent. Review and edit the draft before saving.
+- **Manage your Memories.** Create entries manually, edit saved fields, and open the original document from the detail view. Search by keyword or narrow the list with tags.
+- **Ask your Memories.** Ask a natural-language question about confirmed records. The backend plans the query, retrieves relevant records for your account, and links the answer to its sources.
+- **Schedule one-time email reminders.** Use a confirmed document date as a suggestion, choose a time, and save the reminder. Delivery uses the verified email address on your account.
+- **Manage account access.** Sign up, verify your email, sign in, or reset your password through Cognito.
 
 ## Screenshots
 
-These screenshots show the current app, including the Memory library, RAG-based AI Q&A, and Memory details.
-
-### AI Q&A
-
-![AI Q&A](docs/screenshots/ai-qa.jpg)
-
-### Memory details and original source
-
-![Memory detail](docs/screenshots/memory-detail.jpg)
-
-### Memory list
-
-![Memory list](docs/screenshots/memory-list.jpg)
-
-### Local notification
-
-![Local reminder notification](docs/screenshots/notification-reminder.jpg)
-
+The [live Web app](https://d2hi82pya3luc1.cloudfront.net/) shows the current interface. The earlier Expo screenshots are retained in [the screenshot archive](docs/screenshots/).
 
 ## Architecture
 
-```text
-Expo / React Native / TypeScript
-              │ HTTP + multipart upload
-              ▼
-FastAPI / Python
-       ├── PostgreSQL: Memories, tags, reminders, and recognition status
-       ├── Local OCR: Tesseract
-       └── Optional AI: OpenAI (server-side only)
-```
+| Component | Role |
+| --- | --- |
+| React, TypeScript, and Vite | Web interface served from S3 through CloudFront |
+| Amazon Cognito | Account registration, sign-in, and password recovery |
+| API Gateway and AWS Lambda | FastAPI endpoints running in a Linux container with Tesseract |
+| Neon PostgreSQL | Memories, confirmed fields, tags, reminders, and retrieval data |
+| Private Amazon S3 | Original images, with presigned uploads and reads |
+| OpenAI | Field extraction and source-grounded answers after user consent |
+| EventBridge Scheduler and Amazon SES | One-time reminder scheduling and email delivery |
 
-The target architecture is Expo → API Gateway → Lambda → Neon PostgreSQL + private S3, with Cognito access tokens. M5.1 prepares explicit migrations, owner isolation, presigned image transfers, synchronous AI deadlines and a Linux OCR container. No resources have been deployed. See [cloud configuration and API contract](docs/cloud-deployment.md).
+The browser uploads photos directly to private S3 using a short-lived presigned form. The API validates the upload before OCR and keeps Memory access scoped to the signed-in owner. Manual saving works independently of AI.
 
 ## Project structure
 
-```text
-app/                    FastAPI application, models, routes, and services
-  routes/               Memory, image, AI, vision, and reminder endpoints
-  services/             OCR, AI, tagging, and category logic
-  adapters/             Lambda/Mangum adapter
-mobile/                 Expo React Native application
-tests/                  Backend tests
-mobile/tests/           Mobile unit tests
-uploads/                Local development upload directory
-```
+| Path | Contents |
+| --- | --- |
+| [web/](web/) | Vite frontend and Web tests |
+| [app/](app/) | FastAPI routes, models, OCR, retrieval, and reminders |
+| [migrations/](migrations/) | Explicit database migrations |
+| [deployment/](deployment/) | Lambda container, hosting templates, and release script |
+| [tests/](tests/) | Backend tests |
+| [mobile/](mobile/) | Earlier React Native and Expo client, currently paused |
 
-## Local development
+## Development
 
-### 1. Prepare PostgreSQL
-
-Create a local database and user, for example `memory_dev` and `memory_user`.
-
-### 2. Configure backend environment variables
+For local Web development, copy `web/.env.example` to `web/.env.local` and set the API URL and Cognito public configuration. Then run:
 
 ```sh
-export DATABASE_URL='postgresql+psycopg://memory_user:your-local-password@127.0.0.1:5432/memory_dev'
-export LOCAL_USER_ID='local-dev-user'
-```
-
-To enable AI recognition, set the key only in the backend environment:
-
-```sh
-export OPENAI_API_KEY='your-key'
-export OPENAI_VISION_MODEL='gpt-5.6-luna'
-```
-
-Never put `OPENAI_API_KEY` in `EXPO_PUBLIC_*`, mobile configuration, source files, or logs.
-
-### 3. Initialize the chosen database explicitly
-
-Startup never changes the schema. Set `MIGRATION_DATABASE_URL` securely to the chosen **direct** database, then run `python -m migrations --apply`. Existing personal databases remain untouched until you explicitly approve and run an upgrade.
-
-### 4. Start the API
-
-```sh
-.venv/bin/uvicorn app.main:app --reload
-```
-
-The API is available at `http://127.0.0.1:8000`. The health check is `/health`, and the interactive API documentation is `/docs`.
-
-### 5. Start the Expo app
-
-```sh
-cd mobile
+cd web
 npm install
-npm start
+npm run dev
 ```
 
-The mobile app uses `http://127.0.0.1:8000` by default. If a physical device cannot reach the computer's localhost, set `EXPO_PUBLIC_API_URL` to the computer's local network address:
+For backend database setup, migrations, and runtime configuration, see the [cloud configuration and API contract](docs/cloud-deployment.md). For Web setup and releases to the existing AWS environment, see the [Web README](web/README.md).
 
-```sh
-EXPO_PUBLIC_API_URL=http://<computer-lan-address>:8000 npm start
-```
+## Verification
 
-You can also use `npm run ios`, `npm run android`, or `npm run web`.
-
-## Tests and checks
-
-### Memory questions
-
-Open **Ask My Memories** to query confirmed records with citations. The Intent
-Classifier plans structured filters, keyword/semantic matches, sorting and limits;
-the Query Router applies them within the authenticated owner's data. Legacy reviewed
-dates/locations remain supported. Drafts and stale embeddings are excluded; context
-is bounded and truncation is reported. Distance/currency/aggregate tools remain
-unsupported. Clarification state is stored in PostgreSQL with a 15-minute expiry.
-`OPENAI_RAG_MODEL` selects the answering model. Existing keyword search remains available.
+Run backend checks from the project root and Web checks from `web/`.
 
 ```sh
 .venv/bin/pytest -q
-cd mobile && npm run typecheck && npm test
+cd web
+npm test
+npm run build
 ```
 
-Automated tests never call the real OpenAI API. Backend tests should use an isolated test database; tests involving Memories may clean up test records.
+Backend tests use disposable data and mock outbound AI calls. The Web build checks TypeScript and bundles the frontend for deployment.
 
-## Image recognition flow
+## Privacy and delivery
 
-1. The user selects an image from the camera or photo library.
-2. The mobile app converts unsupported formats, including HEIC/HEIF, to JPEG.
-3. The backend preserves the original source and creates a draft Memory.
-4. Tesseract runs OCR locally.
-5. OCR text is sent to OpenAI for structured analysis only after explicit user consent.
-6. AI-generated titles and fields remain drafts until the user reviews and confirms them.
-7. A recognition failure does not delete the image; the user can still complete and save the Memory manually.
-
-Re-analysis is an explicit user action. Opening a saved Memory does not automatically trigger an AI request.
-
-## Privacy and security boundaries
-
-- AI keys must exist only in the backend environment.
-- Original images and text are preserved by default; deletion requires an explicit user action.
-- AI output never becomes final data automatically; recognition results require human review.
-- Missing values remain empty. The system does not infer locations, addresses, or purposes from GPS or context.
-- The current default is a fixed local development user and is not a production authentication design.
-- Multi-user sharing, automatic email/SMS access, and complex offline synchronization are not currently included.
-
-## Current status and roadmap
-
-- M0–M4: Completed and accepted
-- M5: AWS cloud integration and deployment, in progress
-- M6: Security, privacy, reliability, and release testing
-- M7: Beta testing and release
-- V2: Cross-device synchronization
-- RAG retrieval and AI Q&A: available in the local single-user app
-
-V1 does not include recurring reminders, incoming email/SMS ingestion, website scraping, multi-user sharing, or professional legal, medical, or financial advice. RAG and AI Q&A are currently available locally; production multi-user authentication and cloud deployment remain future work.
+Original images and reviewed text are retained with each Memory. AI suggestions remain drafts until confirmed, and missing details can be left blank. OpenAI keys stay in the backend. While SES is in the sandbox, the reminder recipient must also be verified in SES.
 
 ## License
 
-No open-source license has been declared. Public redistribution is not granted by default.
-
-## M5.1 validation limits
-
-Default tests use a disposable SQLite database, temporary uploads and mocked providers.
-PostgreSQL/pgvector migration tests require a separate local `memory_test_*` database
-via `TEST_DATABASE_URL`. Never point tests at personal data. Mobile notifications
-remain local. Cognito mobile sign-in/refresh UI is pending; cloud token and transfer
-helpers are prepared. Linux image, real JWT dependencies, cloud permissions/Budgets
-and two-user cloud acceptance still require validation; no cloud pass is claimed.
-
-Local verification: backend **206 passed, 5 skipped**; mobile **11 passed**;
-TypeScript typecheck and YAML syntax checks passed. Skips cover unavailable
-PostgreSQL migration/data tests, real JWT cryptography, and the optional OCR fixture.
+No open-source license has been declared.
